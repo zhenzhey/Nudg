@@ -1,0 +1,37 @@
+import { NextResponse } from "next/server";
+import { createClient } from "@/lib/supabase/server";
+import { planGoal } from "@/lib/ai";
+import { z } from "zod";
+
+const RequestSchema = z.object({
+  goal: z.string().min(10).max(500),
+  duration_hint: z.number().int().min(1).max(12).optional(),
+});
+
+export async function POST(request: Request) {
+  try {
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const body = await request.json();
+    const parsed = RequestSchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: "Invalid input", details: parsed.error.flatten() },
+        { status: 400 }
+      );
+    }
+
+    const result = await planGoal(parsed.data.goal, parsed.data.duration_hint);
+    return NextResponse.json(result);
+  } catch (err) {
+    console.error("[api/ai/plan] Error:", err);
+    return NextResponse.json(
+      { error: "Failed to generate plan" },
+      { status: 500 }
+    );
+  }
+}
