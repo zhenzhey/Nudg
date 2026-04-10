@@ -124,4 +124,30 @@
   .text-balance {
     text-wrap: balance;
   }
+
+  /* Dot grid for hero */
+  .dot-grid {
+    background-image: radial-gradient(circle, #ffffff07 1px, transparent 1px);
+    background-size: 28px 28px;
+  }
+
+  /* Fine grid lines */
+  .line-grid {
+    background-image:
+      linear-gradient(rgba(255,255,255,0.025) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,0.025) 1px, transparent 1px);
+    background-size: 72px 72px;
+  }
+
+  /* Gradient border wrapper */
+  .gradient-border {
+    background: linear-gradient(135deg, #6366F140, #A78BFA40);
+    padding: 1px;
+    border-radius: 12px;
+  }
+
+  /* Glow ring on hover */
+  .glow-primary {
+    box-shadow: 0 0 32px rgba(99, 102, 241, 0.35);
+  }
 }
