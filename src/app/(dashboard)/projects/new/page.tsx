@@ -2,10 +2,17 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
 import { cn } from "@/lib/utils";
-import type { PlanResponse, AIWeekPlan, VerificationType } from "@/types";
+import type {
+  PlanResponse,
+  AIWeekPlan,
+  VerificationType,
+  InterviewAnswer,
+  InterviewQuestion,
+} from "@/types";
 import { VERIFICATION_TYPE_LABELS } from "@/types";
+import { ClarificationInterview } from "@/components/projects/clarification-interview";
+import { PlanLoading } from "@/components/projects/plan-loading";
 import {
   ArrowLeft,
   Sparkles,
@@ -26,7 +33,16 @@ import {
   Code2,
 } from "lucide-react";
 
-type Step = "input" | "validating" | "validation_failed" | "review";
+type Step =
+  | "input"
+  | "clarifying_loading"
+  | "clarifying"
+  | "clarifying_failed"
+  | "validating"
+  | "validation_failed"
+  | "review";
+
+type ClarifyStatus = "ok" | "empty" | "truncated" | "rate_limited" | "error";
 
 interface DeliverableInput {
   id: string;
@@ -84,6 +100,12 @@ export default function NewProjectPage() {
   const [intensity, setIntensity] = useState<"casual" | "steady" | "intense">("steady");
   const [planResult, setPlanResult] = useState<PlanResponse | null>(null);
 
+  // Clarification interview
+  const [interviewQuestions, setInterviewQuestions] = useState<InterviewQuestion[]>([]);
+  const [interviewAnswers, setInterviewAnswers] = useState<InterviewAnswer[]>([]);
+  const [clarifyStatus, setClarifyStatus] = useState<ClarifyStatus>("ok");
+  const [clarifyError, setClarifyError] = useState<string | null>(null);
+
   // Review step state
   const [projectTitle, setProjectTitle] = useState("");
   const [projectDescription, setProjectDescription] = useState("");
@@ -94,28 +116,30 @@ export default function NewProjectPage() {
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
 
-  async function callPlan(text: string, hint?: number): Promise<PlanResponse> {
+  async function callPlan(
+    text: string,
+    hint?: number,
+    answers?: InterviewAnswer[]
+  ): Promise<PlanResponse> {
     const res = await fetch("/api/ai/plan", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ goal: text, duration_hint: hint, intensity }),
+      body: JSON.stringify({
+        goal: text,
+        duration_hint: hint,
+        intensity,
+        interview: answers,
+      }),
     });
     if (!res.ok) throw new Error("API error");
     return res.json();
   }
 
-  async function handleGenerate(e?: React.FormEvent) {
-    e?.preventDefault();
-    if (!projectText.trim()) return;
-    if (projectText.trim().length < 10) {
-      setError("Please describe your project in more detail — what exactly will you build or achieve?");
-      return;
-    }
+  async function runPlanAndRoute(answers: InterviewAnswer[]) {
     setStep("validating");
     setError(null);
-
     try {
-      const data = await callPlan(projectText, durationHint);
+      const data = await callPlan(projectText, durationHint, answers);
       setPlanResult(data);
 
       if (!data.validation.valid || !data.plan) {
@@ -140,6 +164,59 @@ export default function NewProjectPage() {
     }
   }
 
+  async function handleGenerate(e?: React.FormEvent) {
+    e?.preventDefault();
+    if (!projectText.trim()) return;
+    if (projectText.trim().length < 10) {
+      setError("Please describe your project in more detail — what exactly will you build or achieve?");
+      return;
+    }
+    setStep("clarifying_loading");
+    setError(null);
+    setInterviewQuestions([]);
+    setInterviewAnswers([]);
+    setClarifyStatus("ok");
+    setClarifyError(null);
+
+    try {
+      const res = await fetch("/api/ai/clarify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          goal: projectText,
+          duration_hint: durationHint,
+          intensity,
+        }),
+      });
+      if (!res.ok) {
+        setClarifyStatus("error");
+        setClarifyError(`Clarify API returned ${res.status}`);
+        setStep("clarifying_failed");
+        return;
+      }
+      const body = (await res.json()) as {
+        questions: InterviewQuestion[];
+        status?: ClarifyStatus;
+        error?: string;
+      };
+      const status: ClarifyStatus = body.status ?? (body.questions?.length ? "ok" : "empty");
+      setClarifyStatus(status);
+      setClarifyError(body.error ?? null);
+
+      if (status !== "ok" || !body.questions || body.questions.length === 0) {
+        // Never silently skip to plan — let the user see what happened and decide.
+        setStep("clarifying_failed");
+        return;
+      }
+      setInterviewQuestions(body.questions);
+      setStep("clarifying");
+    } catch (err) {
+      setClarifyStatus("error");
+      setClarifyError(err instanceof Error ? err.message : "Network error");
+      setStep("clarifying_failed");
+    }
+  }
+
   function applySuggestion(text: string) {
     setProjectText(text);
     setStep("input");
@@ -148,7 +225,7 @@ export default function NewProjectPage() {
   async function handleRegenerate() {
     setError(null);
     try {
-      const data = await callPlan(projectText, durationHint);
+      const data = await callPlan(projectText, durationHint, interviewAnswers);
       setPlanResult(data);
       if (data.plan) {
         setProjectTitle(data.plan.goal_title);
@@ -201,6 +278,7 @@ export default function NewProjectPage() {
           description: projectDescription,
           duration_weeks: planResult?.plan?.duration_weeks ?? durationHint ?? 4,
           ai_plan: planResult?.plan ?? null,
+          interview: interviewAnswers.length > 0 ? interviewAnswers : undefined,
           deliverables: valid.map((d, i) => ({
             week_number: i + 1,
             title: d.title,
@@ -224,7 +302,7 @@ export default function NewProjectPage() {
   }
 
   // ── Step: input ──────────────────────────────────────────────
-  if (step === "input" || step === "validating") {
+  if (step === "input") {
     return (
       <div className="relative min-h-[calc(100vh-3.5rem)] flex flex-col items-center justify-center px-6 overflow-hidden">
         {/* Background blobs */}
@@ -242,9 +320,9 @@ export default function NewProjectPage() {
           {/* Giant input */}
           <form onSubmit={handleGenerate} className="space-y-3">
             {/* Textarea — standalone card */}
-            <div className="relative w-full shadow-[0px_12px_32px_rgba(17,48,105,0.08)] rounded-xl bg-surface-container-lowest border border-outline-variant/20 focus-within:border-outline-variant/40 focus-within:ring-2 focus-within:ring-primary/10 transition-all">
-              <div className="absolute top-6 left-5 pointer-events-none text-on-surface-variant">
-                <Search size={22} />
+            <div className="flex items-start w-full px-6 py-5 gap-3 shadow-[0px_12px_32px_rgba(17,48,105,0.08)] rounded-2xl bg-surface-container-lowest border border-outline-variant/20 focus-within:border-primary/30 focus-within:ring-4 focus-within:ring-primary/10 transition-all">
+              <div className="shrink-0 pt-[5px] text-on-surface-variant">
+                <Search size={20} />
               </div>
               <textarea
                 rows={2}
@@ -255,20 +333,22 @@ export default function NewProjectPage() {
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.shiftKey) {
                     e.preventDefault();
-                    if (projectText.trim() && step !== "validating") handleGenerate();
+                    if (projectText.trim()) handleGenerate();
                   }
                 }}
-                className="w-full pl-14 pr-6 py-6 bg-transparent text-on-surface text-xl outline-none resize-none leading-snug placeholder:text-on-surface-variant/50 rounded-xl"
+                className="flex-1 bg-transparent text-on-surface text-xl leading-snug resize-none border-0 outline-none focus:outline-none focus:ring-0 focus-visible:outline-none placeholder:text-on-surface-variant/50"
               />
             </div>
 
             {/* Controls row — separate from textarea */}
             <div className="flex items-center gap-3">
               {/* Intensity segmented control */}
-              <div className="flex items-center bg-surface-container-lowest border border-outline-variant/20 rounded-xl p-1 shadow-sm gap-0.5">
+              <div className="flex items-center bg-surface-container rounded-xl p-1 gap-0.5">
                 {(["Casual", "Steady", "Intense"] as const).map((label) => {
                   const val = label.toLowerCase() as "casual" | "steady" | "intense";
                   const active = intensity === val;
+                  const activeColor =
+                    val === "intense" ? "text-warning" : val === "casual" ? "text-on-surface" : "text-primary";
                   return (
                     <button
                       key={val}
@@ -277,12 +357,8 @@ export default function NewProjectPage() {
                       className={cn(
                         "text-xs font-semibold px-4 py-2 rounded-lg transition-all",
                         active
-                          ? val === "intense"
-                            ? "bg-warning-container text-on-warning-container shadow-sm"
-                            : val === "casual"
-                            ? "bg-surface-container-high text-on-surface shadow-sm"
-                            : "bg-primary/10 text-primary shadow-sm"
-                          : "text-on-surface-variant/50 hover:text-on-surface-variant"
+                          ? `bg-surface-container-lowest shadow-sm ${activeColor}`
+                          : "text-on-surface-variant/60 hover:text-on-surface"
                       )}
                     >
                       {label}
@@ -292,7 +368,7 @@ export default function NewProjectPage() {
               </div>
 
               {/* Duration */}
-              <div className="flex items-center gap-2 px-4 py-2.5 bg-surface-container-lowest border border-outline-variant/20 rounded-xl shadow-sm text-xs text-on-surface-variant/70">
+              <div className="flex items-center gap-2.5 px-4 py-2 bg-surface-container rounded-xl text-xs">
                 <span className="tabular-nums font-semibold text-on-surface">{durationHint}w</span>
                 <input
                   type="range"
@@ -310,22 +386,10 @@ export default function NewProjectPage() {
               {/* Submit */}
               <button
                 type="submit"
-                disabled={!projectText.trim() || step === "validating"}
+                disabled={!projectText.trim()}
                 className="flex items-center gap-2 bg-gradient-to-br from-primary to-primary-dim text-on-primary px-6 py-2.5 rounded-xl font-semibold text-sm hover:opacity-90 transition-opacity shadow-sm disabled:opacity-40 disabled:cursor-not-allowed"
               >
-                {step === "validating" ? (
-                  <>
-                    <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                    </svg>
-                    Validating...
-                  </>
-                ) : (
-                  <>
-                    Start <ArrowRight size={14} />
-                  </>
-                )}
+                Start <ArrowRight size={14} />
               </button>
             </div>
             {error && (
@@ -333,6 +397,7 @@ export default function NewProjectPage() {
                 {error}
               </p>
             )}
+
           </form>
 
           {/* Suggested opportunities */}
@@ -368,6 +433,128 @@ export default function NewProjectPage() {
           </div>
         </div>
       </div>
+    );
+  }
+
+  // ── Step: clarifying_loading / validating — multi-step loader ──
+  if (step === "clarifying_loading") {
+    return <PlanLoading phase="clarifying" goalText={projectText} />;
+  }
+  if (step === "validating") {
+    return (
+      <PlanLoading
+        phase="planning"
+        goalText={projectText}
+        answers={interviewAnswers}
+      />
+    );
+  }
+
+  // ── Step: clarifying_failed — clarify returned empty / errored ──
+  if (step === "clarifying_failed") {
+    const statusCopy: Record<ClarifyStatus, { title: string; body: string }> = {
+      ok: { title: "No questions", body: "The model chose not to ask any questions." },
+      empty: {
+        title: "No questions worth asking",
+        body: "The AI decided none of the clarifying questions would meaningfully change the plan for this goal. You can proceed as-is, or edit the idea to add more detail and try again.",
+      },
+      truncated: {
+        title: "AI response was cut off",
+        body: "The model's answer got truncated before it finished. Retry — this usually works the second time.",
+      },
+      rate_limited: {
+        title: "Rate limit hit",
+        body: "The Gemini free tier allows 20 requests/day and we just hit it. Wait a minute and retry, or upgrade the API key.",
+      },
+      error: {
+        title: "Something went wrong",
+        body: "The clarifier didn't return a usable response. Retry, or proceed without clarification.",
+      },
+    };
+    const copy = statusCopy[clarifyStatus];
+    return (
+      <div className="relative min-h-[calc(100vh-3.5rem)] flex items-center justify-center px-6 overflow-hidden">
+        <div className="pointer-events-none absolute inset-0 z-0 opacity-40">
+          <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-primary-fixed-dim rounded-full mix-blend-multiply filter blur-3xl opacity-30" />
+          <div className="absolute bottom-1/3 right-1/4 w-[30rem] h-[30rem] bg-surface-variant rounded-full mix-blend-multiply filter blur-3xl opacity-40" />
+        </div>
+        <div className="relative z-10 w-full max-w-lg bg-surface-container-lowest border border-outline-variant/20 rounded-2xl p-7 shadow-[0px_12px_32px_rgba(17,48,105,0.08)] space-y-5">
+          <div className="flex items-start gap-3">
+            <div className="w-10 h-10 rounded-full bg-error-container flex items-center justify-center text-danger shrink-0">
+              <XCircle size={18} />
+            </div>
+            <div className="min-w-0">
+              <h2 className="text-base font-bold text-on-surface">{copy.title}</h2>
+              <p className="text-sm text-on-surface-variant leading-relaxed mt-1">{copy.body}</p>
+            </div>
+          </div>
+
+          <div className="bg-surface-container rounded-xl px-4 py-3 border border-outline-variant/20">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant mb-1">
+              Your idea
+            </p>
+            <p className="text-sm text-on-surface italic leading-relaxed line-clamp-2">
+              &ldquo;{projectText}&rdquo;
+            </p>
+          </div>
+
+          {clarifyError && (
+            <details className="text-xs text-on-surface-variant">
+              <summary className="cursor-pointer hover:text-on-surface font-medium">Technical details</summary>
+              <pre className="mt-2 bg-surface-container rounded-lg p-3 text-[11px] text-on-surface-variant whitespace-pre-wrap break-words">
+                status: {clarifyStatus}
+                {"\n"}
+                {clarifyError}
+              </pre>
+            </details>
+          )}
+
+          <div className="flex gap-2 pt-1">
+            <button
+              onClick={() => setStep("input")}
+              className="flex-1 flex items-center justify-center gap-2 bg-surface-container text-on-surface font-semibold py-2.5 px-4 rounded-xl transition-colors hover:bg-surface-container-high text-sm border border-outline/40"
+            >
+              <ArrowLeft size={14} />
+              Edit idea
+            </button>
+            <button
+              onClick={() => handleGenerate()}
+              className="flex-1 flex items-center justify-center gap-2 bg-primary text-on-primary font-semibold py-2.5 px-4 rounded-xl transition-colors hover:opacity-90 text-sm"
+            >
+              <RefreshCw size={14} />
+              Retry clarify
+            </button>
+          </div>
+          <button
+            onClick={() => {
+              setInterviewAnswers([]);
+              void runPlanAndRoute([]);
+            }}
+            className="w-full text-xs text-on-surface-variant hover:text-on-surface transition-colors font-medium"
+          >
+            Skip clarification and plan anyway
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Step: clarifying — chat-card interview ───────────────────
+  if (step === "clarifying") {
+    return (
+      <ClarificationInterview
+        goalText={projectText}
+        questions={interviewQuestions}
+        onComplete={(answers) => {
+          setInterviewAnswers(answers);
+          void runPlanAndRoute(answers);
+        }}
+        onSkip={() => {
+          setInterviewAnswers([]);
+          void runPlanAndRoute([]);
+        }}
+        onBack={() => setStep("input")}
+      />
     );
   }
 
@@ -539,6 +726,46 @@ export default function NewProjectPage() {
                   {deliverables.length} Deliverables
                 </span>
               </div>
+
+              {/* Based on your answers */}
+              {interviewAnswers.length > 0 && (
+                <div>
+                  <div className="flex items-center gap-1.5 mb-3">
+                    <Sparkles size={12} className="text-primary" />
+                    <h3 className="text-[11px] font-bold text-on-surface tracking-widest uppercase">
+                      Based on your answers
+                    </h3>
+                  </div>
+                  <div className="space-y-2">
+                    {interviewAnswers.map((a, i) => {
+                      const tagLabel =
+                        a.dimension === "baseline"
+                          ? "Baseline"
+                          : a.dimension === "definition_of_done"
+                          ? "Done when"
+                          : "Constraints";
+                      return (
+                        <div
+                          key={i}
+                          className="bg-primary/5 rounded-lg px-3 py-2 border border-primary/15"
+                        >
+                          <div className="flex items-center gap-1.5 mb-1">
+                            <span className="text-[9px] font-bold uppercase tracking-wider text-on-tertiary-container bg-tertiary-container/80 px-1.5 py-px rounded">
+                              {tagLabel}
+                            </span>
+                          </div>
+                          <p className="text-xs text-on-surface-variant leading-snug line-clamp-1 mb-0.5">
+                            {a.question}
+                          </p>
+                          <p className="text-xs font-semibold text-on-surface leading-snug">
+                            {a.answer}
+                          </p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
 
               {/* Accountability Partner */}
               <div>

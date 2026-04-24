@@ -126,6 +126,22 @@ export interface PlanResponse {
   plan?: AIPlan;
 }
 
+// Clarification interview — asked between input and validation
+export type InterviewDimension = "baseline" | "definition_of_done" | "constraints";
+
+export interface InterviewQuestion {
+  question: string;
+  dimension: InterviewDimension;
+  options: string[];
+}
+
+export interface InterviewAnswer {
+  question: string;
+  dimension: InterviewDimension;
+  answer: string;
+  selected_option_index: number | null;
+}
+
 // Dashboard types
 export interface ProjectProgress {
   project: Project;

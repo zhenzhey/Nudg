@@ -11,6 +11,7 @@ import {
   Send,
   Zap,
 } from "lucide-react";
+import { DemoLoginButton } from "@/components/demo-login-button";
 
 const FILTERS = [
   {
@@ -66,6 +67,10 @@ export default async function LandingPage() {
               </Link>
             ) : (
               <>
+                <DemoLoginButton
+                  label="Demo"
+                  className="hidden sm:inline-flex items-center gap-1.5 text-sm text-text-muted hover:text-text-primary transition-colors disabled:opacity-60"
+                />
                 <Link href="/login" className="text-sm text-text-muted hover:text-text-primary transition-colors">
                   Sign in
                 </Link>
@@ -118,7 +123,7 @@ export default async function LandingPage() {
                 and someone who actually notices when you go quiet.
               </p>
 
-              <div className="flex items-center gap-4 mb-10">
+              <div className="flex flex-wrap items-center gap-4 mb-10">
                 <Link
                   href="/signup"
                   className="inline-flex items-center gap-2 bg-primary hover:bg-primary-hover text-white font-semibold px-6 py-3 rounded-lg transition-colors text-sm glow-primary"
@@ -126,6 +131,7 @@ export default async function LandingPage() {
                   Start building — free
                   <ArrowRight size={15} />
                 </Link>
+                <DemoLoginButton />
                 <Link href="#how" className="text-sm text-text-muted hover:text-text-primary transition-colors">
                   How it works ↓
                 </Link>

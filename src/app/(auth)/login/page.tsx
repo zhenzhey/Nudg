@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { DemoLoginButton } from "@/components/demo-login-button";
 import type { Metadata } from "next";
 
 export default function LoginPage() {
@@ -79,6 +80,20 @@ export default function LoginPage() {
             Sign in
           </Button>
         </form>
+
+        <div className="relative my-5">
+          <div className="absolute inset-0 flex items-center">
+            <div className="w-full border-t border-border" />
+          </div>
+          <div className="relative flex justify-center">
+            <span className="bg-surface px-2 text-xs text-text-muted">or</span>
+          </div>
+        </div>
+
+        <DemoLoginButton
+          fullWidth
+          className="w-full inline-flex items-center justify-center gap-2 bg-surface-2 hover:bg-surface-3 border border-border hover:border-border-2 text-text-primary text-sm font-medium px-4 py-2.5 rounded-lg transition-colors disabled:opacity-60"
+        />
       </div>
 
       <p className="text-center text-sm text-text-muted mt-6">

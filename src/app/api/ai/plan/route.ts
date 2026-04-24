@@ -3,9 +3,17 @@ import { createClient } from "@/lib/supabase/server";
 import { planGoal } from "@/lib/ai";
 import { z } from "zod";
 
+const InterviewAnswerSchema = z.object({
+  question: z.string(),
+  dimension: z.enum(["baseline", "definition_of_done", "constraints"]),
+  answer: z.string(),
+  selected_option_index: z.number().int().nullable(),
+});
+
 const RequestSchema = z.object({
   goal: z.string().min(10).max(500),
   duration_hint: z.number().int().min(1).max(12).optional(),
+  interview: z.array(InterviewAnswerSchema).optional(),
 });
 
 export async function POST(request: Request) {
@@ -25,7 +33,11 @@ export async function POST(request: Request) {
       );
     }
 
-    const result = await planGoal(parsed.data.goal, parsed.data.duration_hint);
+    const result = await planGoal(
+      parsed.data.goal,
+      parsed.data.duration_hint,
+      parsed.data.interview
+    );
     return NextResponse.json(result);
   } catch (err) {
     console.error("[api/ai/plan] Error:", err);

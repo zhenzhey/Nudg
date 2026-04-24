@@ -4,8 +4,8 @@ import { z } from "zod";
 
 const CreateTaskSchema = z.object({
   deliverable_id: z.string().uuid().optional(),
-  title: z.string().min(1).max(500),
-  description: z.string().optional(),
+  title: z.string().min(1).max(5000),
+  description: z.string().max(10000).optional(),
   scheduled_date: z.string().nullable().optional(),
   scheduled_time: z.number().nullable().optional(),
   estimated_hours: z.number().positive().optional(),
@@ -43,7 +43,6 @@ export async function POST(request: Request) {
       .from("tasks")
       .insert({
         deliverable_id: deliverable_id ?? null,
-        user_id: user.id,
         title,
         description: description ?? null,
         status: "pending",

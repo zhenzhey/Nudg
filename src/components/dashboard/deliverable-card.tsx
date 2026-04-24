@@ -281,10 +281,12 @@ function AddTaskRow({
 }) {
   const [value, setValue] = useState("");
   const [isCreating, setIsCreating] = useState(false);
+  const submittingRef = useRef(false);
 
   const handleSubmit = async () => {
     const title = value.trim();
-    if (!title || isCreating) return;
+    if (!title || submittingRef.current) return;
+    submittingRef.current = true;
     setIsCreating(true);
     setValue("");
     try {
@@ -298,16 +300,13 @@ function AddTaskRow({
         onAdd(task);
       }
     } finally {
+      submittingRef.current = false;
       setIsCreating(false);
     }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter") handleSubmit();
-  };
-
-  const handleBlur = () => {
-    if (value.trim()) handleSubmit();
   };
 
   return (
@@ -317,7 +316,6 @@ function AddTaskRow({
         value={value}
         onChange={(e) => setValue(e.target.value)}
         onKeyDown={handleKeyDown}
-        onBlur={handleBlur}
         placeholder="Add a task..."
         disabled={isCreating}
         className="flex-1 text-sm text-on-surface placeholder:text-on-surface-variant/35 bg-transparent outline-none"

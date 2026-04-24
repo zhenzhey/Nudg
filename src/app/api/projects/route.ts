@@ -19,11 +19,19 @@ const DeliverableSchema = z.object({
   tasks: z.array(TaskSchema),
 });
 
+const InterviewAnswerSchema = z.object({
+  question: z.string(),
+  dimension: z.enum(["baseline", "definition_of_done", "constraints"]),
+  answer: z.string(),
+  selected_option_index: z.number().int().nullable(),
+});
+
 const CreateProjectSchema = z.object({
   title: z.string().min(3).max(200),
   description: z.string().optional(),
   duration_weeks: z.number().int().min(1).max(12),
   ai_plan: z.any().optional(),
+  interview: z.array(InterviewAnswerSchema).optional(),
   deliverables: z.array(DeliverableSchema).min(1).max(10),
 });
 
@@ -62,11 +70,15 @@ export async function POST(request: Request) {
       );
     }
 
-    const { deliverables: deliverableData, ...questData } = parsed.data;
+    const { deliverables: deliverableData, interview, ...questData } = parsed.data;
 
     const { data: quest, error: questError } = await supabase
       .from("goals")
-      .insert({ ...questData, user_id: user.id })
+      .insert({
+        ...questData,
+        user_id: user.id,
+        clarification_data: interview ?? null,
+      })
       .select()
       .single();
 
