@@ -51,6 +51,25 @@ export async function POST(
       .single();
 
     if (error) throw error;
+
+    // Auto-complete the goal if all deliverables are now submitted/verified
+    const { data: allDeliverables } = await supabase
+      .from("deliverables")
+      .select("status")
+      .eq("goal_id", deliverable.goal_id);
+
+    if (allDeliverables && allDeliverables.length > 0) {
+      const allDone = allDeliverables.every(
+        (d) => d.status === "submitted" || d.status === "verified"
+      );
+      if (allDone) {
+        await supabase
+          .from("goals")
+          .update({ status: "completed" })
+          .eq("id", deliverable.goal_id);
+      }
+    }
+
     return NextResponse.json({ deliverable: data });
   } catch (err) {
     console.error("[api/deliverables/[id]/submit] Error:", err);

@@ -1,8 +1,24 @@
 // Core domain types for Nudg
 
-export type GoalStatus = "active" | "completed" | "abandoned";
+export type ProjectStatus = "active" | "completed" | "abandoned";
+// Backward compat aliases
+export type QuestStatus = ProjectStatus;
 export type DeliverableStatus = "pending" | "submitted" | "verified" | "missed";
 export type TaskStatus = "pending" | "in_progress" | "completed";
+export type VerificationType =
+  | "manual_upload"
+  | "github_commit"
+  | "google_doc"
+  | "screenshot"
+  | "referee_approval";
+
+export const VERIFICATION_TYPE_LABELS: Record<VerificationType, string> = {
+  manual_upload: "Manual Upload",
+  github_commit: "GitHub Commit",
+  google_doc: "Google Doc Edit",
+  screenshot: "Screenshot",
+  referee_approval: "Referee Approval",
+};
 
 export interface Profile {
   id: string;
@@ -14,13 +30,13 @@ export interface Profile {
   updated_at: string;
 }
 
-export interface Goal {
+export interface Project {
   id: string;
   user_id: string;
   title: string;
   description: string | null;
   duration_weeks: number;
-  status: GoalStatus;
+  status: ProjectStatus;
   start_date: string;
   ai_plan: AIPlan | null;
   created_at: string;
@@ -28,6 +44,11 @@ export interface Goal {
   // Relations (joined)
   deliverables?: Deliverable[];
 }
+
+// Backward compat aliases
+export type Quest = Project;
+export type Goal = Project;
+export type GoalStatus = ProjectStatus;
 
 export interface Deliverable {
   id: string;
@@ -38,6 +59,7 @@ export interface Deliverable {
   outcome_description: string | null;
   due_date: string | null;
   status: DeliverableStatus;
+  verification_type: VerificationType;
   submission_url: string | null;
   submission_notes: string | null;
   submitted_at: string | null;
@@ -48,17 +70,19 @@ export interface Deliverable {
 
 export interface Task {
   id: string;
-  deliverable_id: string;
+  deliverable_id: string | null;  // null for standalone calendar tasks
+  user_id?: string | null;
   title: string;
   description: string | null;
   estimated_hours: number | null;
   status: TaskStatus;
+  scheduled_date: string | null;  // ISO date "YYYY-MM-DD"
+  scheduled_time: number | null;  // hours float, e.g. 14.5 = 2:30pm
   completed_at: string | null;
   created_at: string;
 }
 
 // AI planning types
-
 export interface AIPlan {
   goal_title: string;
   goal_description: string;
@@ -80,11 +104,10 @@ export interface AITask {
   estimated_hours: number;
 }
 
-// Goal validation types
-
-export interface GoalValidation {
+// Validation types
+export interface ProjectValidation {
   valid: boolean;
-  score: number; // 0-4 (how many filters passed)
+  score: number;
   filters: {
     externally_verifiable: boolean;
     week_arc: boolean;
@@ -95,15 +118,17 @@ export interface GoalValidation {
   suggested_rewrite?: string;
 }
 
+export type QuestValidation = ProjectValidation;
+export type GoalValidation = ProjectValidation;
+
 export interface PlanResponse {
-  validation: GoalValidation;
+  validation: ProjectValidation;
   plan?: AIPlan;
 }
 
 // Dashboard types
-
-export interface GoalProgress {
-  goal: Goal;
+export interface ProjectProgress {
+  project: Project;
   current_week: number;
   weeks_completed: number;
   deliverables_submitted: number;
@@ -112,3 +137,6 @@ export interface GoalProgress {
   streak: number;
   on_track: boolean;
 }
+
+export type QuestProgress = ProjectProgress;
+export type GoalProgress = ProjectProgress;

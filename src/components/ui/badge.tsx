@@ -9,37 +9,27 @@ interface BadgeProps {
 
 export function Badge({ children, variant = "default", className }: BadgeProps) {
   const variantClasses = {
-    default: "bg-surface-3 text-text-secondary border-border",
-    primary: "bg-primary-muted text-primary-light border-primary/30",
-    success: "bg-success-muted text-success border-success/30",
-    warning: "bg-warning-muted text-warning border-warning/30",
-    danger: "bg-danger-muted text-danger border-danger/30",
-    accent: "bg-accent-muted text-accent border-accent/30",
+    default:  "bg-surface-container text-on-surface-variant border border-outline/40",
+    primary:  "bg-primary/10 text-primary border border-primary/20",
+    success:  "bg-success-muted text-success border border-success/20",
+    warning:  "bg-warning-muted text-warning border border-warning/20",
+    danger:   "bg-error-container text-danger border border-danger/20",
+    accent:   "bg-tertiary-container text-tertiary border border-tertiary/20",
   };
 
   return (
-    <span
-      className={cn(
-        "inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded-md border",
-        variantClasses[variant],
-        className
-      )}
-    >
+    <span className={cn("inline-flex items-center gap-1 px-2.5 py-0.5 text-xs font-semibold rounded-full", variantClasses[variant], className)}>
       {children}
     </span>
   );
 }
 
-// Status-specific badge for deliverable statuses
 export function StatusBadge({ status }: { status: DeliverableStatus }) {
-  const config: Record<
-    DeliverableStatus,
-    { label: string; variant: BadgeProps["variant"]; dot: string }
-  > = {
-    pending: { label: "Pending", variant: "default", dot: "bg-text-muted" },
-    submitted: { label: "Submitted", variant: "primary", dot: "bg-primary" },
-    verified: { label: "Verified", variant: "success", dot: "bg-success" },
-    missed: { label: "Missed", variant: "danger", dot: "bg-danger" },
+  const config: Record<DeliverableStatus, { label: string; variant: BadgeProps["variant"]; dot: string }> = {
+    pending:   { label: "Pending",   variant: "default",  dot: "bg-on-surface-variant/50" },
+    submitted: { label: "Submitted", variant: "primary",  dot: "bg-primary" },
+    verified:  { label: "Verified",  variant: "success",  dot: "bg-success" },
+    missed:    { label: "Missed",    variant: "danger",   dot: "bg-danger" },
   };
 
   const { label, variant, dot } = config[status];

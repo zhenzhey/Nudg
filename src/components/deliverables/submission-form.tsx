@@ -6,7 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import type { Deliverable } from "@/types";
-import { ExternalLink, CheckCircle2 } from "lucide-react";
+import { VERIFICATION_TYPE_LABELS } from "@/types";
+import { ExternalLink, CheckCircle2, RotateCcw } from "lucide-react";
 
 interface SubmissionFormProps {
   deliverable: Deliverable;
@@ -19,6 +20,7 @@ export function SubmissionForm({ deliverable, goalId }: SubmissionFormProps) {
   const [notes, setNotes] = useState(deliverable.submission_notes ?? "");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [resubmitting, setResubmitting] = useState(false);
 
   const isSubmitted =
     deliverable.status === "submitted" || deliverable.status === "verified";
@@ -53,12 +55,12 @@ export function SubmissionForm({ deliverable, goalId }: SubmissionFormProps) {
     }
   }
 
-  if (isSubmitted) {
+  if (isSubmitted && !resubmitting) {
     return (
-      <div className="bg-success-muted border border-success/30 rounded-xl p-5">
+      <div className="bg-success-muted ring-1 ring-success/20 rounded-xl p-5">
         <div className="flex items-start gap-3">
           <CheckCircle2 size={20} className="text-success shrink-0 mt-0.5" />
-          <div>
+          <div className="flex-1 min-w-0">
             <p className="text-sm font-semibold text-success">Deliverable submitted</p>
             {deliverable.submission_url && (
               <a
@@ -72,18 +74,30 @@ export function SubmissionForm({ deliverable, goalId }: SubmissionFormProps) {
               </a>
             )}
             {deliverable.submission_notes && (
-              <p className="text-xs text-success/80 mt-1">{deliverable.submission_notes}</p>
+              <p className="text-xs text-success/70 mt-1 italic">{deliverable.submission_notes}</p>
             )}
           </div>
+          <button
+            onClick={() => setResubmitting(true)}
+            className="flex items-center gap-1 text-xs text-success/60 hover:text-success transition-colors shrink-0"
+          >
+            <RotateCcw size={12} />
+            Resubmit
+          </button>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="bg-surface border border-border rounded-xl p-5">
-      <h3 className="text-sm font-semibold text-text-primary mb-1">Submit this deliverable</h3>
-      <p className="text-xs text-text-muted mb-4">
+    <div className="bg-surface-container-low rounded-xl p-5">
+      <div className="flex items-center justify-between mb-1">
+        <h3 className="text-sm font-bold text-on-surface">Submit this deliverable</h3>
+        <span className="text-xs text-on-surface-variant bg-tertiary-container/50 px-2.5 py-1 rounded-full font-medium">
+          {VERIFICATION_TYPE_LABELS[deliverable.verification_type ?? "manual_upload"]}
+        </span>
+      </div>
+      <p className="text-xs text-on-surface-variant mb-4">
         {deliverable.outcome_description ?? "Submit a link or description of what you shipped."}
       </p>
 
@@ -107,20 +121,21 @@ export function SubmissionForm({ deliverable, goalId }: SubmissionFormProps) {
         />
 
         {error && (
-          <p className="text-sm text-danger bg-danger-muted border border-danger/30 rounded-lg p-3">
+          <p className="text-sm text-error bg-error-container/20 ring-1 ring-error/20 rounded-lg p-3">
             {error}
           </p>
         )}
 
-        <Button
-          type="submit"
-          variant="primary"
-          size="md"
-          loading={loading}
-          fullWidth
-        >
-          Submit deliverable
-        </Button>
+        <div className="flex gap-2">
+          {resubmitting && (
+            <Button type="button" variant="ghost" size="md" onClick={() => setResubmitting(false)} fullWidth>
+              Cancel
+            </Button>
+          )}
+          <Button type="submit" variant="primary" size="md" loading={loading} fullWidth>
+            {resubmitting ? "Update submission" : "Submit deliverable"}
+          </Button>
+        </div>
       </form>
     </div>
   );
