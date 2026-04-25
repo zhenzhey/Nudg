@@ -1,7 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
-import { TaskList } from "@/components/tasks/task-list";
+import { DeliverableTasks } from "@/components/deliverables/deliverable-tasks";
 import { SubmissionForm } from "@/components/deliverables/submission-form";
 import { StatusBadge } from "@/components/ui/badge";
 import {
@@ -50,7 +50,8 @@ export default async function ProjectDetailPage({
   if (error || !quest) notFound();
 
   quest.deliverables?.sort(
-    (a: Deliverable, b: Deliverable) => a.week_number - b.week_number
+    (a: Deliverable, b: Deliverable) =>
+      (a.order_index ?? a.week_number ?? 0) - (b.order_index ?? b.week_number ?? 0)
   );
   quest.deliverables?.forEach((d: Deliverable) => {
     d.tasks?.sort(
@@ -63,8 +64,10 @@ export default async function ProjectDetailPage({
   const progress = getGoalProgress(quest as Quest);
   const streak = calculateStreak(quest.deliverables ?? []);
   const daysLeft = getDaysRemaining(quest.start_date, activeWeek);
+  // First non-submitted deliverable in order_index order. Plans can be
+  // milestone-based (week_number null) so we don't key off week_number here.
   const currentDeliverable = quest.deliverables?.find(
-    (d: Deliverable) => d.week_number === activeWeek
+    (d: Deliverable) => d.status !== "submitted" && d.status !== "verified"
   );
 
   return (
@@ -139,7 +142,7 @@ export default async function ProjectDetailPage({
             <div className="flex items-start justify-between gap-3 mb-4">
               <div>
                 <div className="text-xs text-primary font-mono font-semibold mb-1.5">
-                  Week {currentDeliverable.week_number}
+                  Deliverable {(currentDeliverable.order_index ?? 0) + 1}
                 </div>
                 <h3 className="text-lg font-bold text-on-surface">
                   {currentDeliverable.title}
@@ -158,11 +161,12 @@ export default async function ProjectDetailPage({
               </div>
             </div>
 
-            {currentDeliverable.tasks && currentDeliverable.tasks.length > 0 && (
-              <div className="mb-6">
-                <TaskList tasks={currentDeliverable.tasks} deliverableId={currentDeliverable.id} />
-              </div>
-            )}
+            <div className="mb-6">
+              <DeliverableTasks
+                tasks={currentDeliverable.tasks ?? []}
+                deliverableId={currentDeliverable.id}
+              />
+            </div>
 
             <SubmissionForm deliverable={currentDeliverable as Deliverable} goalId={quest.id} />
           </div>
@@ -176,8 +180,12 @@ export default async function ProjectDetailPage({
         </h2>
         <div className="space-y-2">
           {(quest.deliverables ?? []).map((deliverable: Deliverable) => {
-            const isCurrent = deliverable.week_number === activeWeek && quest.status === "active";
-            const isFuture = deliverable.week_number > activeWeek;
+            const seq = deliverable.week_number ?? deliverable.order_index + 1;
+            const isCurrent = currentDeliverable?.id === deliverable.id && quest.status === "active";
+            const isFuture =
+              !isCurrent &&
+              currentDeliverable != null &&
+              deliverable.order_index > currentDeliverable.order_index;
             const taskProgress = getDeliverableTaskProgress(deliverable);
 
             return (
@@ -208,7 +216,7 @@ export default async function ProjectDetailPage({
                     ) : isFuture ? (
                       <Lock size={14} />
                     ) : (
-                      `W${deliverable.week_number}`
+                      seq
                     )}
                   </div>
 

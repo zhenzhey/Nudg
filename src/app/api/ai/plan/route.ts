@@ -13,7 +13,10 @@ const InterviewAnswerSchema = z.object({
 const RequestSchema = z.object({
   goal: z.string().min(10).max(500),
   duration_hint: z.number().int().min(1).max(12).optional(),
+  intensity: z.enum(["casual", "steady", "intense"]).default("steady"),
   interview: z.array(InterviewAnswerSchema).optional(),
+  // Free-form user guidance for regeneration ("make week 1 lighter", etc.)
+  instructions: z.string().max(1000).optional(),
 });
 
 export async function POST(request: Request) {
@@ -35,8 +38,10 @@ export async function POST(request: Request) {
 
     const result = await planGoal(
       parsed.data.goal,
-      parsed.data.duration_hint,
-      parsed.data.interview
+      parsed.data.duration_hint ?? 4,
+      parsed.data.intensity,
+      parsed.data.interview,
+      parsed.data.instructions
     );
     return NextResponse.json(result);
   } catch (err) {

@@ -53,7 +53,11 @@ export type GoalStatus = ProjectStatus;
 export interface Deliverable {
   id: string;
   goal_id: string;
-  week_number: number;
+  // Legacy: weekly cadence. Now nullable; new milestone plans leave this null
+  // and rely on order_index + due_date instead.
+  week_number: number | null;
+  order_index: number;
+  estimated_hours: number | null;
   title: string;
   description: string | null;
   outcome_description: string | null;
@@ -83,19 +87,25 @@ export interface Task {
 }
 
 // AI planning types
+export type Intensity = "casual" | "steady" | "intense";
+
 export interface AIPlan {
   goal_title: string;
   goal_description: string;
   duration_weeks: number;
-  weeks: AIWeekPlan[];
+  total_estimated_hours: number;
+  deliverables: AIDeliverable[];
 }
 
-export interface AIWeekPlan {
-  week_number: number;
-  deliverable_title: string;
-  deliverable_description: string;
+export interface AIDeliverable {
+  order_index: number;
+  title: string;
+  description: string;
   outcome_description: string;
-  tasks: AITask[];
+  estimated_hours: number;
+  rationale: string;
+  confidence_score: number;
+  task_sketch: Array<{ label: string; hours: number }>;
 }
 
 export interface AITask {
@@ -104,26 +114,24 @@ export interface AITask {
   estimated_hours: number;
 }
 
-// Validation types
-export interface ProjectValidation {
-  valid: boolean;
-  score: number;
-  filters: {
-    externally_verifiable: boolean;
-    week_arc: boolean;
-    professionally_valuable: boolean;
-    user_controlled: boolean;
-  };
-  feedback: string;
-  suggested_rewrite?: string;
+// Feasibility (replaces the old 4-filter validator)
+export interface FeasibilityResult {
+  feasible: boolean;
+  reason: string;
+  suggested_rescope?: string;
 }
 
-export type QuestValidation = ProjectValidation;
-export type GoalValidation = ProjectValidation;
+export interface CriticVerdict {
+  status: "PASS" | "REJECT";
+  feedback: string;
+  issues?: string[];
+  revised: boolean;
+}
 
 export interface PlanResponse {
-  validation: ProjectValidation;
+  feasibility: FeasibilityResult;
   plan?: AIPlan;
+  critic?: CriticVerdict;
 }
 
 // Clarification interview — asked between input and validation

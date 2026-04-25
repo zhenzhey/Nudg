@@ -1,72 +1,150 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import type {
   PlanResponse,
+  AIPlan,
+  CriticVerdict,
+  FeasibilityResult,
+  Intensity,
   InterviewAnswer,
   InterviewQuestion,
+  AITask,
 } from "@/types";
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 
-const SYSTEM_PROMPT = `You are the Nudg AI planner. Nudg turns vague goals into structured weekly execution plans.
+// Hour ranges for each intensity tier. Injected verbatim into the Architect
+// and Critic prompts so the model can do arithmetic on
+// "intensity_min*duration .. intensity_max*duration" for the total hour budget.
+const INTENSITY_HOURS: Record<Intensity, [number, number]> = {
+  casual: [3, 7],
+  steady: [8, 14],
+  intense: [15, 25],
+};
 
-Your job has two phases:
+const ARCHITECT_PROMPT = `You are a seasoned serial founder and product/technical architect. Your job is to plan the deliverables of a solopreneur/builder project.
 
-PHASE 1 — GOAL VALIDATION
-Apply these 4 filters. The goal must pass ALL of them:
-1. Externally verifiable: Must produce something reviewable — a URL, GitHub repo, deployed app, video demo, file, or submission link. "Learn React" fails. "Build and deploy a React portfolio" passes.
-2. 1–12 week arc: Each week must yield a distinct, submittable artifact. Goals too small (<1 week) or too large (>12 weeks) fail.
-3. Professionally valuable: Must build toward career or business outcomes that matter — portfolio pieces, shipped products, demonstrable skills. "Write a journal" fails. "Build an AI tool and publish it" passes.
-4. User-controlled: The outcome must depend on the user's work, not others' decisions. "Get hired at Google" fails. "Build and launch a product" passes.
+You always work in two steps:
 
-PHASE 2 — PLANNING (only if all 4 filters pass)
-Break the goal into weekly deliverables. Each week has:
-- One concrete, submittable deliverable (not a list of activities)
-- 3–5 micro-tasks (each ~1–2 hours, totaling 5–10 hours/week)
-- A clear success criterion: what exactly counts as "done"
+STEP 1 — FEASIBILITY CHECK (replaces generic goal validation)
+Decide if the goal can plausibly be reached given the user's full picture:
+  capability (baseline) + actual constraints + total hour budget (intensity × duration)
+  + the specific success metric the user gave in definition_of_done.
+Use ALL three clarification dimensions, not just baseline.
+If not feasible, return { "feasibility": { "feasible": false, "reason": "...", "suggested_rescope": "..." } }
+and STOP. Do NOT generate deliverables.
+
+STEP 2 — DELIVERABLE PLANNING (only if feasible)
+
+Frame each deliverable as a checkpoint along the path to the goal. They are ORDERED in time — later deliverables build on what earlier ones produced. Two things matter most: (1) is each deliverable high-quality and worth shipping, and (2) does the overall order make sense as a progression?
+
+Working principles:
+- Cut ruthlessly. Drop everything non-MVP given the time budget.
+- Outcome-first. Each deliverable is a verifiable artifact (shipped landing page, deployed API, live demo URL, customer-facing release), NOT an activity ("frontend dev", "research").
+- Match capability. Beginners need smaller, confidence-building first deliverables. Experienced builders skip fundamentals and start at real work.
+- Respect constraints. If the user said they don't know stack X or have a hard blocker, factor it in.
+- Variable size is fine. Deliverables don't need to all be the same size; some may be 4h, some 18h. What matters is the total hours and a sensible cadence.
+- Total estimated hours MUST land within the provided hour budget range.
+
+Hour estimation (load-bearing — the Critic checks this):
+- For each deliverable, write a task_sketch of 3–5 sub-task fragments with rough hours.
+- Set estimated_hours = sum(task_sketch.hours).
+- If the user's baseline says they're new to the relevant tech, inflate sketch hours (1.5–2× nominal).
+- If baseline shows they already know the stack, use nominal hours.
+- Don't write round-number hours without a sketch backing them.
+
+Do NOT generate due_dates. Scheduling is computed downstream from order_index + estimated_hours + the project's start_date and weekly pace, so it can be re-derived as the user's progress shifts. Focus on getting the hours right; the calendar follows.
+
+Business sequencing (context-sensitive — NOT a rigid template):
+- Goals involving revenue / users / launch with HIGH uncertainty (no validated demand, vague audience, unproven premise) → frontload validation: landing page, user interviews, distribution test, before heavy build.
+- Goals where the user shows CLEAR demand signals (existing audience, inbound interest, well-known problem analogues) → validation can be lighter or interleaved later.
+- Internal tools / portfolio pieces / non-monetized goals → no validation deliverable required; go straight to building.
+- Never produce a plan that builds everything before any external feedback. Never force a generic "waitlist in week 1" if it doesn't fit the project's shape.
+- Cite your reasoning in each deliverable's rationale (≤10 chars, e.g. "validate demand", "core loop", "ship MVP").
+
+Each deliverable must include:
+- order_index (0-based, dense, no gaps)
+- title, description, outcome_description (exactly what a valid submission looks like)
+- task_sketch[], estimated_hours
+- rationale (≤10 chars), confidence_score (0..1, how necessary this deliverable is to the goal)
+
+Round 2 only: if Critic feedback is provided, address EVERY issue concretely. Do not regenerate from scratch — fix what was flagged.
 
 Return ONLY valid JSON. No markdown, no explanation, no code blocks.`;
 
-const PLAN_SCHEMA = `{
-  "validation": {
-    "valid": boolean,
-    "score": number (0-4),
-    "filters": {
-      "externally_verifiable": boolean,
-      "week_arc": boolean,
-      "professionally_valuable": boolean,
-      "user_controlled": boolean
-    },
-    "feedback": "string — explain which filters failed and why, or confirm the goal is valid",
-    "suggested_rewrite": "string — optional, only if goal is invalid, suggest a revised goal that would pass"
+const ARCHITECT_SCHEMA = `{
+  "feasibility": {
+    "feasible": boolean,
+    "reason": "string — concise (1-2 sentences) explanation, even when feasible",
+    "suggested_rescope": "string — optional, only when feasible=false: a tighter version of the goal that would fit"
   },
   "plan": {
-    "goal_title": "string — concise goal title",
-    "goal_description": "string — 1-2 sentence description of what will be built",
+    "goal_title": "string — concise project title",
+    "goal_description": "string — 1-2 sentences on what will be built and why",
     "duration_weeks": number,
-    "weeks": [
+    "total_estimated_hours": number,
+    "deliverables": [
       {
-        "week_number": number,
-        "deliverable_title": "string — concrete artifact to ship this week",
-        "deliverable_description": "string — what this week builds and why it matters",
-        "outcome_description": "string — exactly what a valid submission looks like (URL, repo link, demo video, etc.)",
-        "tasks": [
-          {
-            "title": "string — specific action",
-            "description": "string — brief explanation of what to do",
-            "estimated_hours": number (0.5–2.0)
-          }
-        ]
+        "order_index": number,
+        "title": "string — concrete artifact",
+        "description": "string — what this deliverable produces and why it matters",
+        "outcome_description": "string — what a valid submission looks like (URL, repo, demo, etc.)",
+        "task_sketch": [
+          { "label": "string — sub-task fragment", "hours": number }
+        ],
+        "estimated_hours": number,
+        "rationale": "string — ≤10 chars",
+        "confidence_score": number
       }
     ]
   }
 }
 
-Notes:
-- "plan" key is ONLY present if validation.valid is true
-- If validation.valid is false, omit the "plan" key entirely
-- duration_weeks must be between 1 and 12
-- Each week must have 3–5 tasks
-- Task estimated_hours must be between 0.5 and 2.0`;
+Rules:
+- Omit the "plan" key entirely if feasibility.feasible is false.
+- estimated_hours per deliverable MUST equal sum(task_sketch[].hours).
+- total_estimated_hours MUST equal sum(deliverables[].estimated_hours).
+- 1 ≤ deliverables.length ≤ 10.
+- Do NOT include a "tasks" field — micro-tasks are generated separately.`;
+
+const CRITIC_PROMPT = `You are an extremely demanding agile coach and project quality auditor. Audit the plan produced by the Architect with no mercy.
+
+You will be given:
+- The original goal, duration_weeks, intensity (with its hour range), and the user's clarification answers.
+- The Architect's plan as JSON.
+
+AUDIT CRITERIA — all four must pass for status PASS:
+
+1. TIME MATCH
+   - sum(deliverables.estimated_hours) must fall within [intensity_min * duration_weeks, intensity_max * duration_weeks] with ±15% tolerance.
+   - No single deliverable is so large it implies an unsustainable burst given the user's per-week capacity (cap any single deliverable at intensity_max * 2 weeks).
+   - task_sketch hours must sum to estimated_hours for every deliverable.
+
+2. NECESSITY
+   - No "fake deliverables": polished branding without users, premature CI/CD, gold-plating, ceremony, "set up project" as its own deliverable.
+   - Every deliverable must materially advance the goal stated in definition_of_done.
+
+3. SEQUENCE & REACHABILITY
+   - Deliverables in order_index order form a continuous path from current state (implied by baseline) to the goal in definition_of_done.
+   - No logical gaps where one deliverable depends on something that was never built.
+
+4. BUSINESS SENSE (context-sensitive, NOT a rigid template)
+   - If the goal involves users / revenue / launch AND the clarification shows uncertainty about audience or demand → validation must appear before heavy build, but the EXACT placement is judgment.
+   - If clarification shows clear demand signals or this is internal/portfolio → no validation deliverable is required; do not flag its absence.
+   - Reject only when the plan would obviously fail commercially (e.g. building the full product before any external feedback for a high-uncertainty business goal).
+
+OUTPUT
+- Pass: {"status": "PASS", "feedback": "", "issues": []}
+- Reject: {"status": "REJECT", "feedback": "specific problems + concrete rewrite suggestions for each", "issues": ["time_mismatch" | "fake_deliverable" | "sequence_gap" | "business_misfit" | "estimation_unsupported"]}
+
+Be strict but fair: if the plan is workable, pass it. Do not reject for stylistic preferences.
+
+Return ONLY valid JSON. No markdown, no explanation, no code blocks.`;
+
+const CRITIC_SCHEMA = `{
+  "status": "PASS" | "REJECT",
+  "feedback": "string — empty when PASS; specific issues + rewrite suggestions when REJECT",
+  "issues": ["string — issue tag(s)"]
+}`;
 
 // Retry a Gemini call on transient errors (503, 429) or JSON parse failures
 async function withRetry<T>(fn: () => Promise<T>, maxAttempts = 3): Promise<T> {
@@ -97,60 +175,305 @@ function stripCodeFences(text: string): string {
     .trim();
 }
 
-// Validate and plan a goal using Gemini
-export async function planGoal(
+// ─── Architect + Critic 2-agent loop ─────────────────────────────────────
+// planGoal runs the Architect, then the Critic. If the Critic rejects,
+// the Architect is given the feedback and produces a revised plan, which
+// is returned as-is (no second Critic pass — keeps latency bounded and
+// avoids loops). Each call's input + raw output is logged to stdout so
+// prompt iteration can be done from the terminal.
+
+function formatClarification(interview?: InterviewAnswer[]): string {
+  if (!interview || interview.length === 0) {
+    return "(no clarification answers — proceed with reasonable defaults)";
+  }
+  const grouped: Record<string, string[]> = {
+    baseline: [],
+    definition_of_done: [],
+    constraints: [],
+  };
+  for (const a of interview) {
+    grouped[a.dimension] = grouped[a.dimension] || [];
+    grouped[a.dimension].push(`Q: ${a.question}\n   A: ${a.answer}`);
+  }
+  const sections: string[] = [];
+  for (const dim of ["baseline", "definition_of_done", "constraints"] as const) {
+    if (grouped[dim].length > 0) {
+      sections.push(`[${dim}]\n${grouped[dim].map((s) => "  " + s).join("\n")}`);
+    } else {
+      sections.push(`[${dim}] (not provided — infer from context)`);
+    }
+  }
+  return sections.join("\n");
+}
+
+function buildArchitectInput(
   goalText: string,
-  durationHint?: number,
-  interview?: InterviewAnswer[]
-): Promise<PlanResponse> {
+  durationWeeks: number,
+  intensity: Intensity,
+  interview: InterviewAnswer[] | undefined,
+  startDateISO: string,
+  criticFeedback: string | null,
+  userInstructions: string | null
+): string {
+  const [hMin, hMax] = INTENSITY_HOURS[intensity];
+  const totalMin = hMin * durationWeeks;
+  const totalMax = hMax * durationWeeks;
+  const lines: string[] = [
+    `Goal: "${goalText}"`,
+    `Duration: ${durationWeeks} weeks (start_date = ${startDateISO})`,
+    `Intensity: ${intensity} = ${hMin}–${hMax} hours per week`,
+    `Total hour budget: ${totalMin}–${totalMax} hours over the full project`,
+    ``,
+    `Clarification answers (use ALL three dimensions in your feasibility check and plan):`,
+    formatClarification(interview),
+    ``,
+  ];
+  if (userInstructions && userInstructions.trim()) {
+    lines.push(
+      `USER REGENERATION INSTRUCTIONS (the user just rejected the prior plan and asked for these specific changes — apply them directly, they take priority over your defaults):`,
+      userInstructions.trim(),
+      ``
+    );
+  }
+  if (criticFeedback) {
+    lines.push(
+      `CRITIC FEEDBACK (round 2 — your previous plan was rejected; address every issue concretely, do not regenerate from scratch):`,
+      criticFeedback,
+      ``
+    );
+  }
+  lines.push(`Return JSON matching this schema:\n${ARCHITECT_SCHEMA}`);
+  return lines.join("\n");
+}
+
+function buildCriticInput(
+  goalText: string,
+  durationWeeks: number,
+  intensity: Intensity,
+  interview: InterviewAnswer[] | undefined,
+  architectOutput: unknown
+): string {
+  const [hMin, hMax] = INTENSITY_HOURS[intensity];
+  const totalMin = hMin * durationWeeks;
+  const totalMax = hMax * durationWeeks;
+  return [
+    `Goal: "${goalText}"`,
+    `Duration: ${durationWeeks} weeks`,
+    `Intensity: ${intensity} = ${hMin}–${hMax} hours per week (total budget ${totalMin}–${totalMax}h ±15%)`,
+    ``,
+    `Clarification answers:`,
+    formatClarification(interview),
+    ``,
+    `Architect's plan to audit:`,
+    JSON.stringify(architectOutput, null, 2),
+    ``,
+    `Return JSON matching this schema:\n${CRITIC_SCHEMA}`,
+  ].join("\n");
+}
+
+async function runArchitect(userMessage: string, round: 1 | 2): Promise<{
+  feasibility: FeasibilityResult;
+  plan?: AIPlan;
+}> {
   const model = genAI.getGenerativeModel({
-    model: "gemini-2.5-flash",
-    systemInstruction: SYSTEM_PROMPT,
+    model: "gemini-3-flash-preview",
+    systemInstruction: ARCHITECT_PROMPT,
     generationConfig: {
       temperature: 0.3,
       maxOutputTokens: 16384,
-      responseMimeType: "application/json", // ask Gemini to return pure JSON
+      responseMimeType: "application/json",
     },
   });
 
-  const lines: string[] = [`Goal: "${goalText}"`];
-  if (durationHint) lines.push(`Preferred duration: ${durationHint} weeks`);
-  if (interview && interview.length > 0) {
-    lines.push("");
-    lines.push("CLARIFICATION INTERVIEW — the user answered these before planning:");
-    for (const a of interview) {
-      lines.push(`- [${a.dimension}] ${a.question}`);
-      lines.push(`  → ${a.answer}`);
-    }
-    lines.push("");
-    lines.push(
-      "CRITICAL: these answers MUST visibly shape the plan. Two users with the same goal but different answers should see meaningfully different plans. Specifically:"
-    );
-    lines.push(
-      "- baseline → set difficulty and entry point. If the user has shipped before, SKIP fundamentals and start at real work. If they're new, start with setup and the smallest shippable piece."
-    );
-    lines.push(
-      "- definition_of_done → the final week's deliverable must match their stated success metric exactly (e.g. '$100 MRR', 'first paying user', 'launched waitlist'). Don't substitute a generic endpoint."
-    );
-    lines.push(
-      "- constraints → remove any week or task that conflicts with stated blockers/time. Prefer tools/stacks they said they already know."
-    );
-    lines.push(
-      "Weave their exact words into deliverable_title/description where natural — it should feel hand-tailored, not generic."
-    );
-  }
-  lines.push("");
-  lines.push(`Return JSON matching this schema:\n${PLAN_SCHEMA}`);
-  const userMessage = lines.join("\n");
+  console.log(`\n[architect r${round}] ▼▼▼ INPUT ▼▼▼\n${userMessage}\n[architect r${round}] ▼▼▼ END INPUT ▼▼▼\n`);
 
   return await withRetry(async () => {
     const result = await model.generateContent(userMessage);
     const finishReason = result.response.candidates?.[0]?.finishReason;
     if (finishReason === "MAX_TOKENS") {
-      throw new Error("AI response was truncated — try a shorter goal or fewer weeks");
+      throw new Error("Architect response was truncated — try a shorter goal or fewer weeks");
+    }
+    const raw = result.response.text();
+    console.log(`[architect r${round}] ▲▲▲ RAW OUTPUT ▲▲▲\n${raw}\n[architect r${round}] ▲▲▲ END OUTPUT ▲▲▲\n`);
+    const parsed = JSON.parse(stripCodeFences(raw)) as {
+      feasibility: FeasibilityResult;
+      plan?: AIPlan;
+    };
+    return parsed;
+  });
+}
+
+async function runCritic(userMessage: string): Promise<CriticVerdict> {
+  const model = genAI.getGenerativeModel({
+    model: "gemini-2.5-flash",
+    systemInstruction: CRITIC_PROMPT,
+    generationConfig: {
+      temperature: 0.2,
+      maxOutputTokens: 4096,
+      responseMimeType: "application/json",
+    },
+  });
+
+  console.log(`\n[critic] ▼▼▼ INPUT ▼▼▼\n${userMessage}\n[critic] ▼▼▼ END INPUT ▼▼▼\n`);
+
+  return await withRetry(async () => {
+    const result = await model.generateContent(userMessage);
+    const raw = result.response.text();
+    console.log(`[critic] ▲▲▲ RAW OUTPUT ▲▲▲\n${raw}\n[critic] ▲▲▲ END OUTPUT ▲▲▲\n`);
+    const parsed = JSON.parse(stripCodeFences(raw)) as {
+      status: "PASS" | "REJECT";
+      feedback: string;
+      issues?: string[];
+    };
+    return { ...parsed, revised: false };
+  });
+}
+
+export async function planGoal(
+  goalText: string,
+  durationWeeks: number,
+  intensity: Intensity,
+  interview?: InterviewAnswer[],
+  userInstructions?: string
+): Promise<PlanResponse> {
+  const startDateISO = new Date().toISOString().slice(0, 10);
+  console.log(
+    `\n[planGoal] ============================================================` +
+      `\n[planGoal] goal="${goalText}"` +
+      `\n[planGoal] duration_weeks=${durationWeeks} intensity=${intensity} interview_answers=${interview?.length ?? 0}` +
+      `\n[planGoal] user_instructions=${userInstructions ? `"${userInstructions}"` : "(none)"}` +
+      `\n[planGoal] ============================================================\n`
+  );
+
+  const instructions = userInstructions ?? null;
+
+  // Round 1
+  const r1Input = buildArchitectInput(goalText, durationWeeks, intensity, interview, startDateISO, null, instructions);
+  const r1 = await runArchitect(r1Input, 1);
+
+  if (!r1.feasibility.feasible || !r1.plan) {
+    console.log(`[planGoal] feasibility=false — returning early without Critic\n`);
+    return { feasibility: r1.feasibility };
+  }
+
+  // Critic
+  const criticInput = buildCriticInput(goalText, durationWeeks, intensity, interview, r1);
+  const verdict = await runCritic(criticInput);
+
+  if (verdict.status === "PASS") {
+    console.log(`[planGoal] critic=PASS — returning round-1 plan\n`);
+    return { feasibility: r1.feasibility, plan: r1.plan, critic: verdict };
+  }
+
+  // Round 2 (one rewrite, no second critic pass)
+  console.log(`[planGoal] critic=REJECT — running architect round 2\n`);
+  const r2Input = buildArchitectInput(
+    goalText,
+    durationWeeks,
+    intensity,
+    interview,
+    startDateISO,
+    verdict.feedback,
+    instructions
+  );
+  const r2 = await runArchitect(r2Input, 2);
+
+  // If round 2 declares the goal infeasible, surface that.
+  if (!r2.feasibility.feasible || !r2.plan) {
+    return { feasibility: r2.feasibility, critic: { ...verdict, revised: true } };
+  }
+
+  return {
+    feasibility: r2.feasibility,
+    plan: r2.plan,
+    critic: { ...verdict, revised: true },
+  };
+}
+
+// Generate 3–5 micro-tasks for a single deliverable (identified by order_index).
+// Called after the user has confirmed the deliverable roadmap. Other deliverables
+// get their tasks lazily when they unlock.
+export async function generateDeliverableTasks(args: {
+  projectTitle: string;
+  projectDescription: string;
+  orderIndex: number;
+  deliverableTitle: string;
+  deliverableDescription: string;
+  outcomeDescription?: string;
+  estimatedHours: number;
+  allDeliverables: Array<{ order_index: number; title: string }>;
+  interview?: InterviewAnswer[];
+}): Promise<AITask[]> {
+  // Scale task count and per-task cap to the deliverable's actual hour budget.
+  const budget = Math.max(1, args.estimatedHours);
+  const minTasks = budget <= 4 ? 2 : budget <= 10 ? 3 : budget <= 20 ? 5 : 6;
+  const maxTasks = budget <= 4 ? 4 : budget <= 10 ? 5 : budget <= 20 ? 8 : 10;
+  const perTaskMax = budget <= 4 ? 2.0 : budget <= 10 ? 3.0 : 4.0;
+
+  const model = genAI.getGenerativeModel({
+    model: "gemini-2.5-flash",
+    systemInstruction: `You generate micro-tasks for a single deliverable in the Nudg app.
+
+RULES:
+- ${minTasks}–${maxTasks} micro-tasks total
+- Each task: 0.5–${perTaskMax.toFixed(1)} hours, specific and actionable (starts with a verb)
+- Tasks should build on each other and fully cover the deliverable
+- Total effort budget for this deliverable: ${budget} hours — your tasks' estimated_hours MUST sum to approximately this number (within ±15%). This budget was set upstream; do not contradict it.
+- No vague tasks ("work on X", "start Y"). Each task must be independently completable.
+
+Return ONLY valid JSON. No markdown.`,
+    generationConfig: {
+      temperature: 0.3,
+      maxOutputTokens: 4096,
+      responseMimeType: "application/json",
+    },
+  });
+
+  const lines: string[] = [
+    `Project: "${args.projectTitle}"`,
+    `Project description: "${args.projectDescription}"`,
+    ``,
+    `Full roadmap (for context — do NOT generate tasks for other deliverables):`,
+    ...[...args.allDeliverables]
+      .sort((a, b) => a.order_index - b.order_index)
+      .map((d) => `  D${d.order_index + 1}: ${d.title}`),
+    ``,
+    `CURRENT DELIVERABLE TO PLAN: D${args.orderIndex + 1}`,
+    `Title: "${args.deliverableTitle}"`,
+    `Description: "${args.deliverableDescription}"`,
+  ];
+  if (args.outcomeDescription) {
+    lines.push(`Success criterion: "${args.outcomeDescription}"`);
+  }
+  if (args.interview && args.interview.length > 0) {
+    lines.push("");
+    lines.push("User context from clarification interview:");
+    for (const a of args.interview) {
+      lines.push(`- [${a.dimension}] ${a.question} → ${a.answer}`);
+    }
+  }
+  lines.push("");
+  lines.push(`Return JSON:
+{
+  "tasks": [
+    { "title": "string", "description": "string", "estimated_hours": number }
+  ]
+}`);
+
+  return await withRetry(async () => {
+    const result = await model.generateContent(lines.join("\n"));
+    const finishReason = result.response.candidates?.[0]?.finishReason;
+    if (finishReason === "MAX_TOKENS") {
+      throw new Error("Task generation was truncated — retry or simplify the deliverable");
     }
     const text = stripCodeFences(result.response.text());
-    return JSON.parse(text) as PlanResponse;
+    const parsed = JSON.parse(text) as { tasks?: AITask[] };
+    const tasks = (parsed.tasks ?? []).map((t) => ({
+      title: String(t.title ?? "").trim(),
+      description: String(t.description ?? "").trim(),
+      estimated_hours: Math.max(0.25, Math.min(perTaskMax, Number(t.estimated_hours) || 1.0)),
+    }));
+    return tasks.filter((t) => t.title.length > 0).slice(0, maxTasks);
   });
 }
 
@@ -270,14 +593,13 @@ export async function generateClarifyingQuestions(
   intensity?: "casual" | "steady" | "intense"
 ): Promise<{ questions: InterviewQuestion[]; status: ClarifyStatus; error?: string }> {
   const model = genAI.getGenerativeModel({
-    model: "gemini-3-flash-preview",
+    model: "gemini-2.5-flash",
     systemInstruction: CLARIFY_SYSTEM_PROMPT,
     generationConfig: {
       temperature: 0.4,
-      // gemini-2.5-flash uses "thinking" tokens that eat into this budget
-      // before any JSON output is produced. 1024 was being consumed entirely
-      // by thinking, truncating the JSON mid-stream. 4096 gives headroom.
-      maxOutputTokens: 4096,
+      // gemini-3-flash-preview spends ~4k tokens on thinking before emitting
+      // JSON; 4096 left ~150 for content and truncated mid-question.
+      maxOutputTokens: 8192,
       responseMimeType: "application/json",
     },
   });

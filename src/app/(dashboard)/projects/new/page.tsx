@@ -2,24 +2,41 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { cn } from "@/lib/utils";
+import { cn, computeDueDates } from "@/lib/utils";
 import type {
   PlanResponse,
-  AIWeekPlan,
+  AIDeliverable,
   VerificationType,
   InterviewAnswer,
   InterviewQuestion,
 } from "@/types";
-import { VERIFICATION_TYPE_LABELS } from "@/types";
+import Link from "next/link";
 import { ClarificationInterview } from "@/components/projects/clarification-interview";
 import { PlanLoading } from "@/components/projects/plan-loading";
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import { restrictToVerticalAxis } from "@dnd-kit/modifiers";
 import {
   ArrowLeft,
   Sparkles,
   RefreshCw,
   Plus,
   Trash2,
-  CheckCircle2,
   XCircle,
   GripVertical,
   Calendar,
@@ -28,9 +45,11 @@ import {
   ChevronRight,
   Search,
   ArrowRight,
+  ArrowUpRight,
   Lightbulb,
   Globe,
   Code2,
+  X,
 } from "lucide-react";
 
 type Step =
@@ -39,7 +58,7 @@ type Step =
   | "clarifying"
   | "clarifying_failed"
   | "validating"
-  | "validation_failed"
+  | "feasibility_failed"
   | "review";
 
 type ClarifyStatus = "ok" | "empty" | "truncated" | "rate_limited" | "error";
@@ -48,23 +67,11 @@ interface DeliverableInput {
   id: string;
   title: string;
   description: string;
+  outcome_description: string;
+  estimated_hours: number;
+  due_date: string;
   verification_type: VerificationType;
-  tasks: { title: string; estimated_hours: number }[];
 }
-
-const FILTER_LABELS: Record<string, string> = {
-  externally_verifiable: "Externally verifiable",
-  week_arc: "1–12 week arc",
-  professionally_valuable: "Professionally valuable",
-  user_controlled: "User-controlled",
-};
-
-const FILTER_HINTS: Record<string, string> = {
-  externally_verifiable: "What specific link, file, or URL will prove this is done? (e.g. GitHub repo, deployed app, video demo)",
-  week_arc: "What would you ship at the end of Week 1? Each week needs a distinct, submittable artifact.",
-  professionally_valuable: "How does this connect to your career or business? What skill or portfolio piece will it produce?",
-  user_controlled: "Remove any dependency on other people's decisions. Focus on what YOU will build and deliver.",
-};
 
 const SUGGESTED_PROJECTS = [
   {
@@ -92,6 +99,28 @@ function uid() {
   return `d-${++_counter}-${Math.random().toString(36).slice(2, 6)}`;
 }
 
+// Build the review-screen deliverable list from the AI plan, computing
+// due_dates from cumulative estimated_hours rather than asking the model.
+function buildDeliverableInputs(
+  plan: { deliverables: AIDeliverable[]; duration_weeks: number }
+): DeliverableInput[] {
+  const sorted = [...plan.deliverables].sort((a, b) => a.order_index - b.order_index);
+  const dueByIdx = computeDueDates(
+    sorted.map((d) => ({ order_index: d.order_index, estimated_hours: d.estimated_hours })),
+    new Date(),
+    plan.duration_weeks
+  );
+  return sorted.map((d) => ({
+    id: uid(),
+    title: d.title,
+    description: d.description,
+    outcome_description: d.outcome_description,
+    estimated_hours: d.estimated_hours,
+    due_date: dueByIdx.get(d.order_index) ?? "",
+    verification_type: "manual_upload" as VerificationType,
+  }));
+}
+
 export default function NewProjectPage() {
   const router = useRouter();
   const [step, setStep] = useState<Step>("input");
@@ -116,10 +145,32 @@ export default function NewProjectPage() {
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
 
+  // Regenerate panel state — opens an inline textarea where the user types
+  // free-form instructions ("make week 1 lighter") that get passed to the AI.
+  const [regenOpen, setRegenOpen] = useState(false);
+  const [regenInstructions, setRegenInstructions] = useState("");
+  const [regenerating, setRegenerating] = useState(false);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  );
+
+  function handleDragEnd(e: DragEndEvent) {
+    const { active, over } = e;
+    if (!over || active.id === over.id) return;
+    setDeliverables((items) => {
+      const oldIdx = items.findIndex((i) => i.id === active.id);
+      const newIdx = items.findIndex((i) => i.id === over.id);
+      return arrayMove(items, oldIdx, newIdx);
+    });
+  }
+
   async function callPlan(
     text: string,
     hint?: number,
-    answers?: InterviewAnswer[]
+    answers?: InterviewAnswer[],
+    instructions?: string
   ): Promise<PlanResponse> {
     const res = await fetch("/api/ai/plan", {
       method: "POST",
@@ -129,6 +180,7 @@ export default function NewProjectPage() {
         duration_hint: hint,
         intensity,
         interview: answers,
+        instructions: instructions?.trim() || undefined,
       }),
     });
     if (!res.ok) throw new Error("API error");
@@ -142,20 +194,12 @@ export default function NewProjectPage() {
       const data = await callPlan(projectText, durationHint, answers);
       setPlanResult(data);
 
-      if (!data.validation.valid || !data.plan) {
-        setStep("validation_failed");
+      if (!data.feasibility.feasible || !data.plan) {
+        setStep("feasibility_failed");
       } else {
         setProjectTitle(data.plan.goal_title);
         setProjectDescription(data.plan.goal_description);
-        setDeliverables(
-          data.plan.weeks.map((w: AIWeekPlan) => ({
-            id: uid(),
-            title: w.deliverable_title,
-            description: w.deliverable_description,
-            verification_type: "manual_upload" as VerificationType,
-            tasks: w.tasks.map((t) => ({ title: t.title, estimated_hours: t.estimated_hours })),
-          }))
-        );
+        setDeliverables(buildDeliverableInputs(data.plan));
         setStep("review");
       }
     } catch {
@@ -222,26 +266,30 @@ export default function NewProjectPage() {
     setStep("input");
   }
 
-  async function handleRegenerate() {
+  async function handleRegenerate(instructions?: string) {
     setError(null);
+    setRegenerating(true);
     try {
-      const data = await callPlan(projectText, durationHint, interviewAnswers);
+      const data = await callPlan(
+        projectText,
+        durationHint,
+        interviewAnswers,
+        instructions
+      );
       setPlanResult(data);
       if (data.plan) {
         setProjectTitle(data.plan.goal_title);
         setProjectDescription(data.plan.goal_description);
-        setDeliverables(
-          data.plan.weeks.map((w: AIWeekPlan) => ({
-            id: uid(),
-            title: w.deliverable_title,
-            description: w.deliverable_description,
-            verification_type: "manual_upload" as VerificationType,
-            tasks: w.tasks.map((t) => ({ title: t.title, estimated_hours: t.estimated_hours })),
-          }))
-        );
+        setDeliverables(buildDeliverableInputs(data.plan));
+      } else {
+        setError("AI couldn't produce a plan with those instructions. Try rephrasing.");
       }
+      setRegenOpen(false);
+      setRegenInstructions("");
     } catch {
       setError("Failed to regenerate. Please try again.");
+    } finally {
+      setRegenerating(false);
     }
   }
 
@@ -249,7 +297,15 @@ export default function NewProjectPage() {
     if (deliverables.length >= 10) return;
     setDeliverables((p) => [
       ...p,
-      { id: uid(), title: "", description: "", verification_type: "manual_upload" as VerificationType, tasks: [] },
+      {
+        id: uid(),
+        title: "",
+        description: "",
+        outcome_description: "",
+        estimated_hours: 0,
+        due_date: "",
+        verification_type: "manual_upload" as VerificationType,
+      },
     ]);
   }
 
@@ -270,6 +326,8 @@ export default function NewProjectPage() {
     setError(null);
 
     try {
+      const ordered = valid.map((d, i) => ({ ...d, order_index: i }));
+
       const res = await fetch("/api/projects", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -279,16 +337,13 @@ export default function NewProjectPage() {
           duration_weeks: planResult?.plan?.duration_weeks ?? durationHint ?? 4,
           ai_plan: planResult?.plan ?? null,
           interview: interviewAnswers.length > 0 ? interviewAnswers : undefined,
-          deliverables: valid.map((d, i) => ({
-            week_number: i + 1,
+          deliverables: ordered.map((d) => ({
+            order_index: d.order_index,
             title: d.title,
             description: d.description,
+            outcome_description: d.outcome_description || undefined,
+            estimated_hours: d.estimated_hours > 0 ? d.estimated_hours : undefined,
             verification_type: d.verification_type,
-            tasks: d.tasks.map(({ title, estimated_hours }) => ({
-              title,
-              estimated_hours,
-              description: "",
-            })),
           })),
         }),
       });
@@ -320,7 +375,7 @@ export default function NewProjectPage() {
           {/* Giant input */}
           <form onSubmit={handleGenerate} className="space-y-3">
             {/* Textarea — standalone card */}
-            <div className="flex items-start w-full px-6 py-5 gap-3 shadow-[0px_12px_32px_rgba(17,48,105,0.08)] rounded-2xl bg-surface-container-lowest border border-outline-variant/20 focus-within:border-primary/30 focus-within:ring-4 focus-within:ring-primary/10 transition-all">
+            <div className="flex items-start w-full px-6 py-5 gap-3 rounded-2xl border-2 border-outline-variant/20 bg-surface-container-lowest shadow-[0px_12px_32px_rgba(17,48,105,0.08)] focus-within:shadow-[0_0_0_3px_rgba(94,106,210,0.2),0px_12px_32px_rgba(17,48,105,0.08)] transition-shadow">
               <div className="shrink-0 pt-[5px] text-on-surface-variant">
                 <Search size={20} />
               </div>
@@ -336,7 +391,8 @@ export default function NewProjectPage() {
                     if (projectText.trim()) handleGenerate();
                   }
                 }}
-                className="flex-1 bg-transparent text-on-surface text-xl leading-snug resize-none border-0 outline-none focus:outline-none focus:ring-0 focus-visible:outline-none placeholder:text-on-surface-variant/50"
+                className="no-focus-ring flex-1 bg-transparent text-on-surface text-xl leading-snug resize-none appearance-none border-none placeholder:text-on-surface-variant/50"
+                style={{ outline: "none", boxShadow: "none", border: "none" }}
               />
             </div>
 
@@ -399,6 +455,18 @@ export default function NewProjectPage() {
             )}
 
           </form>
+
+          {/* Dev mock entry — preview the deliverable planning UI without running AI */}
+          <div className="flex justify-center">
+            <Link
+              href="/projects/new/deliverables"
+              className="inline-flex items-center gap-2 text-xs font-semibold text-primary hover:text-primary-dim transition-colors bg-primary/5 hover:bg-primary/10 px-4 py-2 rounded-full border border-primary/20"
+            >
+              <Sparkles size={12} />
+              Preview deliverables page (mock)
+              <ArrowRight size={12} />
+            </Link>
+          </div>
 
           {/* Suggested opportunities */}
           <div className="space-y-4">
@@ -558,10 +626,9 @@ export default function NewProjectPage() {
     );
   }
 
-  // ── Step: validation_failed ──────────────────────────────────
-  if (step === "validation_failed" && planResult) {
-    const { validation } = planResult;
-    const failedFilters = Object.entries(validation.filters).filter(([, passed]) => !passed);
+  // ── Step: feasibility_failed ─────────────────────────────────
+  if (step === "feasibility_failed" && planResult) {
+    const { feasibility } = planResult;
 
     return (
       <div className="min-h-[calc(100vh-3.5rem)] flex items-start justify-center pt-16 px-4">
@@ -579,68 +646,31 @@ export default function NewProjectPage() {
               <XCircle size={20} className="text-danger" />
             </div>
             <div>
-              <h2 className="text-lg font-bold text-on-surface">Project needs refinement</h2>
+              <h2 className="text-lg font-bold text-on-surface">This goal doesn&apos;t fit your time budget</h2>
               <p className="text-sm text-on-surface-variant">
-                {validation.score}/4 filters passed — fix the issues below and try again.
+                Given your intensity, duration, and the answers you gave, the AI thinks this scope isn&apos;t reachable.
               </p>
             </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-2 mb-5">
-            {Object.entries(FILTER_LABELS).map(([key, label]) => {
-              const passed = validation.filters[key as keyof typeof validation.filters];
-              return (
-                <div
-                  key={key}
-                  className={cn(
-                    "flex items-center gap-2 px-3 py-2.5 rounded-xl text-sm font-medium border",
-                    passed
-                      ? "bg-success-muted text-success border-success/20"
-                      : "bg-error-container text-danger border-danger/20"
-                  )}
-                >
-                  {passed ? <CheckCircle2 size={14} /> : <XCircle size={14} />}
-                  {label}
-                </div>
-              );
-            })}
           </div>
 
           <div className="bg-surface rounded-xl p-4 border border-outline mb-5 shadow-card">
-            <p className="text-sm font-semibold text-on-surface mb-1">What went wrong</p>
-            <p className="text-sm text-on-surface-variant leading-relaxed">{validation.feedback}</p>
+            <p className="text-sm font-semibold text-on-surface mb-1">Why</p>
+            <p className="text-sm text-on-surface-variant leading-relaxed">{feasibility.reason}</p>
           </div>
 
-          {failedFilters.length > 0 && (
-            <div className="space-y-3 mb-5">
-              <p className="text-xs font-bold text-on-surface-variant uppercase tracking-widest">
-                How to fix it
-              </p>
-              {failedFilters.map(([key]) => (
-                <div key={key} className="flex gap-3 bg-surface rounded-xl p-4 border border-outline shadow-card">
-                  <ChevronRight size={15} className="text-primary shrink-0 mt-0.5" />
-                  <div>
-                    <p className="text-xs font-bold text-primary mb-1">{FILTER_LABELS[key]}</p>
-                    <p className="text-sm text-on-surface-variant">{FILTER_HINTS[key]}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {validation.suggested_rewrite && (
+          {feasibility.suggested_rescope && (
             <div className="bg-primary/5 rounded-xl p-4 border border-primary/20 mb-6">
               <p className="text-xs font-bold text-primary uppercase tracking-widest mb-2">
-                AI Suggested Rewrite
+                Suggested rescope
               </p>
               <p className="text-sm text-on-surface italic leading-relaxed mb-3">
-                &ldquo;{validation.suggested_rewrite}&rdquo;
+                &ldquo;{feasibility.suggested_rescope}&rdquo;
               </p>
               <button
-                onClick={() => applySuggestion(validation.suggested_rewrite!)}
+                onClick={() => applySuggestion(feasibility.suggested_rescope!)}
                 className="flex items-center gap-2 text-sm font-semibold text-primary hover:text-primary-dim transition-colors"
               >
-                Use this suggestion
+                Use this rescope
                 <ChevronRight size={14} />
               </button>
             </div>
@@ -688,10 +718,15 @@ export default function NewProjectPage() {
             AI Generated Roadmap
           </div>
           <button
-            onClick={handleRegenerate}
-            className="flex items-center gap-1.5 text-xs font-medium text-on-surface-variant hover:text-on-surface transition-colors"
+            onClick={() => setRegenOpen((v) => !v)}
+            className={cn(
+              "flex items-center gap-1.5 text-xs font-medium transition-colors",
+              regenOpen
+                ? "text-primary"
+                : "text-on-surface-variant hover:text-on-surface"
+            )}
           >
-            <RefreshCw size={13} />
+            <RefreshCw size={13} className={regenerating ? "animate-spin" : ""} />
             Regenerate
           </button>
         </div>
@@ -885,83 +920,124 @@ export default function NewProjectPage() {
             </div>
           </aside>
 
-          {/* Right panel: deliverable grid */}
+          {/* Right panel: vertical timeline */}
           <section className="flex-1 overflow-y-auto px-8 py-7 bg-background">
-            <div className="max-w-3xl">
-              <div className="flex items-center gap-3 bg-surface rounded-xl px-4 py-3 mb-7 border border-outline/40 shadow-card">
-                <Sparkles size={15} className="text-primary shrink-0" />
-                <p className="text-sm text-on-surface-variant font-medium">
-                  Micro-tasks for each deliverable are <span className="font-semibold text-on-surface">automatically generated</span> and assigned weekly.
-                </p>
-              </div>
-
+            <div className="max-w-2xl mx-auto">
               <div className="flex items-center justify-between mb-4">
                 <div>
                   <h3 className="text-base font-bold text-on-surface">What exactly will you deliver?</h3>
-                  <p className="text-xs text-on-surface-variant mt-0.5">Each deliverable = one week. Min 1, max 10.</p>
+                  <p className="text-xs text-on-surface-variant mt-0.5">
+                    Drag to reorder ·{" "}
+                    {planResult.plan.total_estimated_hours?.toFixed(0) ?? "—"}h total. Min 1, max 10.
+                  </p>
                 </div>
                 <span className="text-xs text-on-surface-variant font-medium bg-surface rounded-full px-3 py-1 border border-outline/40">
                   {deliverables.length}/10
                 </span>
               </div>
 
-              <div className="grid grid-cols-1 xl:grid-cols-2 gap-3 mb-4">
-                {deliverables.map((d, idx) => (
-                  <div key={d.id} className="group bg-surface rounded-2xl p-5 shadow-card hover:shadow-card-hover transition-all border border-outline/20 flex flex-col gap-3">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex items-center gap-2 shrink-0">
-                        <GripVertical size={14} className="text-on-surface-variant/40 cursor-grab" />
-                        <span className="text-[11px] font-bold uppercase tracking-widest text-primary/70">W{idx + 1}</span>
+              {/* Regenerate expandable panel */}
+              {regenOpen && (
+                <div className="mb-6 bg-surface rounded-2xl border border-primary/30 shadow-card p-5 animate-slide-up">
+                  <div className="flex items-start justify-between gap-3 mb-3">
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary">
+                        <Sparkles size={14} />
                       </div>
-                      <button
-                        onClick={() => removeDeliverable(d.id)}
-                        disabled={deliverables.length <= 1}
-                        className="opacity-0 group-hover:opacity-100 text-on-surface-variant hover:text-danger transition-all disabled:pointer-events-none disabled:opacity-0"
-                      >
-                        <Trash2 size={13} />
-                      </button>
+                      <div>
+                        <p className="text-sm font-bold text-on-surface">
+                          Regenerate with instructions
+                        </p>
+                        <p className="text-xs text-on-surface-variant">
+                          Tell the AI what to change — scope, pacing, focus, anything.
+                        </p>
+                      </div>
                     </div>
-                    <input
-                      value={d.title}
-                      onChange={(e) => updateDeliverable(d.id, "title", e.target.value)}
-                      placeholder="Deliverable title…"
-                      className="w-full text-sm font-semibold text-on-surface bg-transparent border-none outline-none placeholder:text-on-surface-variant/40"
-                    />
-                    <input
-                      value={d.description}
-                      onChange={(e) => updateDeliverable(d.id, "description", e.target.value)}
-                      placeholder="What exactly will you ship? (success criteria)"
-                      className="w-full text-xs text-on-surface-variant bg-transparent border-none outline-none placeholder:text-on-surface-variant/40"
-                    />
-                    <div className="mt-auto pt-1">
-                      <select
-                        value={d.verification_type}
-                        onChange={(e) => updateDeliverable(d.id, "verification_type", e.target.value as VerificationType)}
-                        className="text-xs text-on-surface-variant bg-surface-container border border-outline/20 rounded-lg px-2 py-1 focus:outline-none focus:border-primary/40"
-                      >
-                        {Object.entries(VERIFICATION_TYPE_LABELS).map(([val, label]) => (
-                          <option key={val} value={val}>{label}</option>
-                        ))}
-                      </select>
-                    </div>
+                    <button
+                      onClick={() => {
+                        setRegenOpen(false);
+                        setRegenInstructions("");
+                      }}
+                      className="text-on-surface-variant hover:text-on-surface transition-colors"
+                    >
+                      <X size={16} />
+                    </button>
                   </div>
-                ))}
+                  <textarea
+                    autoFocus
+                    rows={3}
+                    value={regenInstructions}
+                    onChange={(e) => setRegenInstructions(e.target.value)}
+                    placeholder="e.g. Make the first deliverable lighter. Focus more on user research. Drop the billing milestone."
+                    className="w-full bg-surface-container rounded-xl px-4 py-3 text-sm text-on-surface placeholder:text-on-surface-variant/50 outline-none focus:ring-2 focus:ring-primary/30 resize-none leading-relaxed"
+                  />
+                  <div className="flex justify-end gap-2 mt-3">
+                    <button
+                      onClick={() => {
+                        setRegenOpen(false);
+                        setRegenInstructions("");
+                      }}
+                      className="text-xs font-semibold text-on-surface-variant hover:text-on-surface px-4 py-2 transition-colors"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={() => handleRegenerate(regenInstructions)}
+                      disabled={!regenInstructions.trim() || regenerating}
+                      className="flex items-center gap-1.5 bg-primary text-on-primary text-xs font-semibold px-4 py-2 rounded-lg hover:opacity-90 transition-opacity disabled:opacity-40"
+                    >
+                      <RefreshCw size={12} className={regenerating ? "animate-spin" : ""} />
+                      {regenerating ? "Regenerating..." : "Regenerate"}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Timeline */}
+              <div className="relative">
+                <div className="absolute left-[19px] top-3 bottom-3 w-0.5 bg-gradient-to-b from-primary/40 via-primary/20 to-outline/30" />
+
+                <DndContext
+                  sensors={sensors}
+                  collisionDetection={closestCenter}
+                  onDragEnd={handleDragEnd}
+                  modifiers={[restrictToVerticalAxis]}
+                >
+                  <SortableContext
+                    items={deliverables.map((d) => d.id)}
+                    strategy={verticalListSortingStrategy}
+                  >
+                    <ul className="space-y-3">
+                      {deliverables.map((d, idx) => (
+                        <TimelineCard
+                          key={d.id}
+                          deliverable={d}
+                          index={idx}
+                          canDelete={deliverables.length > 1}
+                          onUpdate={updateDeliverable}
+                          onRemove={removeDeliverable}
+                        />
+                      ))}
+                    </ul>
+                  </SortableContext>
+                </DndContext>
 
                 {deliverables.length < 10 && (
-                  <button
-                    onClick={addDeliverable}
-                    className="bg-transparent border-2 border-dashed border-outline/50 hover:border-primary/50 hover:bg-surface/60 text-on-surface-variant hover:text-primary py-10 rounded-2xl transition-all flex flex-col items-center justify-center gap-2 min-h-[160px]"
-                  >
-                    <div className="w-8 h-8 rounded-full bg-surface flex items-center justify-center border border-outline/50">
-                      <Plus size={16} />
-                    </div>
-                    <span className="text-sm font-semibold">Add Deliverable</span>
-                  </button>
+                  <div className="relative mt-3 pl-[52px]">
+                    <div className="absolute left-[12px] top-4 w-4 h-4 rounded-full border-2 border-dashed border-outline bg-background" />
+                    <button
+                      onClick={addDeliverable}
+                      className="w-full bg-transparent border-2 border-dashed border-outline/50 hover:border-primary/50 hover:bg-surface/60 text-on-surface-variant hover:text-primary py-4 rounded-xl transition-all flex items-center justify-center gap-2"
+                    >
+                      <Plus size={14} />
+                      <span className="text-sm font-semibold">Add Deliverable</span>
+                    </button>
+                  </div>
                 )}
               </div>
 
               {error && (
-                <p className="mt-2 text-sm text-danger bg-error-container px-4 py-2.5 rounded-xl border border-danger/20">
+                <p className="mt-4 text-sm text-danger bg-error-container px-4 py-2.5 rounded-xl border border-danger/20">
                   {error}
                 </p>
               )}
@@ -973,4 +1049,105 @@ export default function NewProjectPage() {
   }
 
   return null;
+}
+
+function TimelineCard({
+  deliverable,
+  index,
+  canDelete,
+  onUpdate,
+  onRemove,
+}: {
+  deliverable: DeliverableInput;
+  index: number;
+  canDelete: boolean;
+  onUpdate: (id: string, field: keyof DeliverableInput, value: string) => void;
+  onRemove: (id: string) => void;
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: deliverable.id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  };
+
+  return (
+    <li
+      ref={setNodeRef}
+      style={style}
+      className={cn(
+        "relative pl-[52px] group",
+        isDragging && "z-10 opacity-80"
+      )}
+    >
+      <div className="absolute left-[11px] top-5 w-[18px] h-[18px] rounded-full bg-gradient-to-br from-primary to-primary-dim ring-4 ring-background flex items-center justify-center">
+        <span className="text-[9px] font-black text-on-primary">{index + 1}</span>
+      </div>
+
+      <div
+        className={cn(
+          "bg-surface rounded-2xl p-4 shadow-card hover:shadow-card-hover transition-all border border-outline/20",
+          isDragging && "shadow-lg ring-2 ring-primary/30"
+        )}
+      >
+        <div className="flex items-start gap-2">
+          <button
+            {...attributes}
+            {...listeners}
+            className="shrink-0 mt-1 text-on-surface-variant/40 hover:text-on-surface-variant cursor-grab active:cursor-grabbing touch-none"
+            aria-label="Drag to reorder"
+          >
+            <GripVertical size={16} />
+          </button>
+
+          <div className="flex-1 min-w-0 space-y-1">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-[10px] font-bold uppercase tracking-widest text-primary/70">
+                Deliverable
+              </span>
+              {deliverable.estimated_hours > 0 && (
+                <span className="text-[10px] font-medium text-on-surface-variant bg-surface-container px-1.5 py-0.5 rounded">
+                  {deliverable.estimated_hours}h
+                </span>
+              )}
+              {deliverable.due_date && (
+                <span className="text-[10px] font-medium text-on-surface-variant">
+                  · due {deliverable.due_date}
+                </span>
+              )}
+            </div>
+            <input
+              value={deliverable.title}
+              onChange={(e) => onUpdate(deliverable.id, "title", e.target.value)}
+              placeholder="Deliverable title…"
+              className="w-full text-sm font-semibold text-on-surface bg-transparent border-none outline-none placeholder:text-on-surface-variant/40"
+            />
+            <textarea
+              value={deliverable.description}
+              onChange={(e) => onUpdate(deliverable.id, "description", e.target.value)}
+              placeholder="What exactly will you ship? (success criteria)"
+              rows={2}
+              className="w-full text-xs text-on-surface-variant bg-transparent border-none outline-none resize-none placeholder:text-on-surface-variant/40 leading-relaxed"
+            />
+          </div>
+
+          <button
+            onClick={() => onRemove(deliverable.id)}
+            disabled={!canDelete}
+            className="shrink-0 opacity-0 group-hover:opacity-100 text-on-surface-variant hover:text-danger transition-all disabled:pointer-events-none disabled:opacity-0 p-1"
+            aria-label="Remove deliverable"
+          >
+            <Trash2 size={13} />
+          </button>
+        </div>
+      </div>
+    </li>
+  );
 }

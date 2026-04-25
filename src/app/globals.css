@@ -30,10 +30,29 @@
     @apply outline-none ring-2 ring-primary/40 ring-offset-2 ring-offset-background;
   }
 
+  textarea.no-focus-ring,
+  textarea.no-focus-ring:focus,
+  textarea.no-focus-ring:focus-visible,
+  textarea.no-focus-ring:focus-within,
+  textarea.no-focus-ring:active,
+  textarea.no-focus-ring:hover {
+    outline: 0 solid transparent !important;
+    outline-offset: 0 !important;
+    box-shadow: none !important;
+    border: 0 none transparent !important;
+    --tw-ring-shadow: 0 0 #0000 !important;
+    --tw-ring-offset-shadow: 0 0 #0000 !important;
+    --tw-ring-width: 0 !important;
+    --tw-ring-offset-width: 0 !important;
+    --tw-ring-color: transparent !important;
+    --tw-ring-offset-color: transparent !important;
+  }
+
   ::selection {
     @apply bg-primary/15 text-on-surface;
   }
 }
+
 
 @layer components {
   .page-container {

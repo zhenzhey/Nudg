@@ -55,6 +55,44 @@ export function formatRelativeTime(date: string): string {
   return formatDate(date);
 }
 
+// Compute due_date for each deliverable from cumulative estimated_hours.
+// Pace = total_estimated_hours / duration_weeks. A deliverable's due_date is
+// the project start_date + (cumulative_hours / pace) weeks. This means a 4h
+// deliverable doesn't take a full week; multiple light deliverables can share
+// one week. Returns a Map keyed by order_index.
+//
+// Falls back to even time-spread if estimated_hours is missing or zero so the
+// caller never gets undefined dates.
+export function computeDueDates(
+  deliverables: Array<{ order_index: number; estimated_hours: number | null | undefined }>,
+  startDate: string | Date,
+  durationWeeks: number
+): Map<number, string> {
+  const start = new Date(startDate);
+  const totalDays = Math.max(1, durationWeeks) * 7;
+  const sorted = [...deliverables].sort((a, b) => a.order_index - b.order_index);
+  const totalHours = sorted.reduce((s, d) => s + (d.estimated_hours ?? 0), 0);
+  const out = new Map<number, string>();
+
+  if (totalHours <= 0) {
+    sorted.forEach((d, i) => {
+      const due = new Date(start);
+      due.setDate(due.getDate() + Math.round(((i + 1) / sorted.length) * totalDays));
+      out.set(d.order_index, due.toISOString().slice(0, 10));
+    });
+    return out;
+  }
+
+  let cumulative = 0;
+  sorted.forEach((d) => {
+    cumulative += d.estimated_hours ?? 0;
+    const due = new Date(start);
+    due.setDate(due.getDate() + Math.round((cumulative / totalHours) * totalDays));
+    out.set(d.order_index, due.toISOString().slice(0, 10));
+  });
+  return out;
+}
+
 // Calculate goal completion percentage
 export function getGoalProgress(goal: Goal): number {
   if (!goal.deliverables || goal.deliverables.length === 0) return 0;
@@ -80,7 +118,9 @@ export function getDeliverableTaskProgress(deliverable: Deliverable): {
 
 // Calculate submission streak
 export function calculateStreak(deliverables: Deliverable[]): number {
-  const sorted = [...deliverables].sort((a, b) => a.week_number - b.week_number);
+  const sorted = [...deliverables].sort(
+    (a, b) => (a.order_index ?? a.week_number ?? 0) - (b.order_index ?? b.week_number ?? 0)
+  );
   let streak = 0;
   for (let i = sorted.length - 1; i >= 0; i--) {
     if (sorted[i].status === "submitted" || sorted[i].status === "verified") {
