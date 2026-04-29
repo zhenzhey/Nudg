@@ -1,11 +1,9 @@
 "use client";
 
 import { useState, useRef, useCallback } from "react";
-import Link from "next/link";
 import {
   CheckSquare,
   Square,
-  Timer,
   Sparkles,
   Trash2,
   Loader2,
@@ -14,29 +12,13 @@ import {
   X,
   Info,
 } from "lucide-react";
-import type { Deliverable, Task, Project } from "@/types";
+import type { Deliverable, Task } from "@/types";
 
 interface DeliverableCardProps {
   deliverable: Deliverable & { tasks: Task[] };
-  project: Project;
   today: string;
   tomorrow: string;
   onTaskUpdate?: (taskId: string, patch: Partial<Task>) => void;
-}
-
-function formatDueLabel(due: string | null): { text: string; urgent: boolean } {
-  if (!due) return { text: "No deadline", urgent: false };
-  const d = new Date(due);
-  const now = new Date();
-  const diffMs = d.getTime() - now.getTime();
-  const diffH = Math.round(diffMs / 3600000);
-  if (diffH < 0) return { text: "Overdue", urgent: true };
-  if (diffH === 0) return { text: "Due now", urgent: true };
-  if (diffH < 24) return { text: `Due in ${diffH}h`, urgent: true };
-  const diffD = Math.round(diffMs / 86400000);
-  if (diffD === 0) return { text: "Due today", urgent: true };
-  if (diffD === 1) return { text: "Due tomorrow", urgent: false };
-  return { text: `Due in ${diffD}d`, urgent: false };
 }
 
 function formatTime(hours: number | null): string {
@@ -91,12 +73,22 @@ function TaskRow({
   };
 
   const scheduleTask = async (date: string | null) => {
-    onUpdate({ scheduled_date: date });
-    await fetch(`/api/tasks/${task.id}/schedule`, {
+    // Optimistic: set the date immediately. The server may also auto-pick a
+    // scheduled_time when we're moving the task onto a date for the first
+    // time; reconcile with the response.
+    onUpdate({ scheduled_date: date, scheduled_time: date ? task.scheduled_time : null });
+    const res = await fetch(`/api/tasks/${task.id}/schedule`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ scheduled_date: date }),
     });
+    if (res.ok) {
+      const { task: updated } = await res.json();
+      onUpdate({
+        scheduled_date: updated.scheduled_date,
+        scheduled_time: updated.scheduled_time,
+      });
+    }
   };
 
   const startEdit = () => {
@@ -329,7 +321,6 @@ function AddTaskRow({
 
 export function DeliverableCard({
   deliverable,
-  project,
   today,
   tomorrow,
   onTaskUpdate,
@@ -337,8 +328,6 @@ export function DeliverableCard({
   const [tasks, setTasks] = useState<Task[]>(deliverable.tasks ?? []);
   const [estimatingIds, setEstimatingIds] = useState<Set<string>>(new Set());
   const [isSuggesting, setIsSuggesting] = useState(false);
-
-  const { text: dueText, urgent } = formatDueLabel(deliverable.due_date);
 
   const updateTask = (id: string, patch: Partial<Task>) => {
     setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)));
@@ -395,55 +384,8 @@ export function DeliverableCard({
 
   return (
     <div className="bg-surface rounded-2xl border border-outline/20 shadow-card overflow-hidden">
-      {/* ── Top section ─────────────────────────────────── */}
-      <div className="p-5 pb-4">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2">
-            <span className={`w-2 h-2 rounded-full ${urgent ? "bg-danger animate-pulse" : "bg-primary"}`} />
-            <span className="text-[11px] font-bold uppercase tracking-widest text-primary">
-              Current Deliverable
-            </span>
-          </div>
-          <span
-            className={`text-xs px-3 py-1 rounded-full font-medium ${
-              urgent
-                ? "bg-warning/10 text-warning"
-                : "bg-surface-container text-on-surface-variant"
-            }`}
-          >
-            {dueText}
-          </span>
-        </div>
-
-        <h2 className="text-2xl font-black text-on-surface leading-tight mb-2">
-          {deliverable.title}
-        </h2>
-        {deliverable.description && (
-          <p className="text-sm text-on-surface-variant leading-relaxed">
-            {deliverable.description}
-          </p>
-        )}
-
-        <div className="flex items-center justify-between mt-5">
-          <Link href={`/projects/${project.id}`}>
-            <button className="flex items-center gap-2 bg-neutral text-on-neutral text-sm font-semibold px-5 py-2.5 rounded-xl hover:opacity-90 transition-opacity shadow-sm">
-              <CheckSquare size={15} />
-              Submit Deliverable
-            </button>
-          </Link>
-          <Link
-            href={`/focus?deliverableId=${deliverable.id}&title=${encodeURIComponent(deliverable.title)}&projectId=${project.id}`}
-          >
-            <button className="flex items-center gap-2 text-on-surface-variant hover:text-primary text-sm font-semibold px-4 py-2.5 rounded-xl hover:bg-primary/8 transition-all">
-              <Timer size={15} />
-              Start Focus
-            </button>
-          </Link>
-        </div>
-      </div>
-
       {/* ── Execution Plan ───────────────────────────────── */}
-      <div className="border-t border-outline/10 px-5 pt-4 pb-5">
+      <div className="px-5 pt-4 pb-5">
         {/* Header row */}
         <div className="flex items-center justify-between mb-3">
           <p className="text-[11px] font-bold uppercase tracking-widest text-primary">

@@ -9,6 +9,7 @@ const CreateTaskSchema = z.object({
   scheduled_date: z.string().nullable().optional(),
   scheduled_time: z.number().nullable().optional(),
   estimated_hours: z.number().positive().optional(),
+  due_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
 });
 
 export async function POST(request: Request) {
@@ -23,7 +24,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Invalid input" }, { status: 400 });
     }
 
-    const { deliverable_id, title, description, scheduled_date, scheduled_time, estimated_hours } = parsed.data;
+    const { deliverable_id, title, description, scheduled_date, scheduled_time, estimated_hours, due_date } = parsed.data;
 
     // If deliverable_id provided, verify it belongs to the user
     if (deliverable_id) {
@@ -43,12 +44,14 @@ export async function POST(request: Request) {
       .from("tasks")
       .insert({
         deliverable_id: deliverable_id ?? null,
+        user_id: user.id,
         title,
         description: description ?? null,
         status: "pending",
         estimated_hours: estimated_hours ?? null,
         scheduled_date: scheduled_date ?? null,
         scheduled_time: scheduled_time ?? null,
+        due_date: due_date ?? null,
       })
       .select()
       .single();

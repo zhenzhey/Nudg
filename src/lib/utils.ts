@@ -93,6 +93,43 @@ export function computeDueDates(
   return out;
 }
 
+// Slice a deliverable's window [windowStart, deliverableDue] into per-task
+// due dates by cumulative estimated_hours. Mirrors `computeDueDates` but for
+// tasks within one deliverable. Tasks are processed in input order; each
+// task's due_date = windowStart + (cumulative_hours / total_hours) * windowDays.
+// Returns an array of YYYY-MM-DD strings aligned 1:1 with the input.
+export function computeTaskDueDates(
+  tasks: Array<{ estimated_hours: number | null | undefined }>,
+  windowStart: string | Date,
+  deliverableDueDate: string | Date
+): string[] {
+  if (tasks.length === 0) return [];
+
+  const start = typeof windowStart === "string" ? new Date(windowStart + "T00:00:00") : new Date(windowStart);
+  start.setHours(0, 0, 0, 0);
+  const due = typeof deliverableDueDate === "string" ? new Date(deliverableDueDate + "T00:00:00") : new Date(deliverableDueDate);
+  due.setHours(0, 0, 0, 0);
+
+  const totalDays = Math.max(1, Math.round((due.getTime() - start.getTime()) / 86_400_000));
+  const totalHours = tasks.reduce((s, t) => s + (t.estimated_hours ?? 0), 0);
+
+  if (totalHours <= 0) {
+    return tasks.map((_, i) => {
+      const d = new Date(start);
+      d.setDate(d.getDate() + Math.round(((i + 1) / tasks.length) * totalDays));
+      return d.toISOString().slice(0, 10);
+    });
+  }
+
+  let cumulative = 0;
+  return tasks.map((t) => {
+    cumulative += t.estimated_hours ?? 0;
+    const d = new Date(start);
+    d.setDate(d.getDate() + Math.max(1, Math.round((cumulative / totalHours) * totalDays)));
+    return d.toISOString().slice(0, 10);
+  });
+}
+
 // Calculate goal completion percentage
 export function getGoalProgress(goal: Goal): number {
   if (!goal.deliverables || goal.deliverables.length === 0) return 0;

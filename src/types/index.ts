@@ -72,6 +72,11 @@ export interface Deliverable {
   tasks?: Task[];
 }
 
+export interface TaskMetadata {
+  start_step?: string;   // 5-min kickoff action to break inertia
+  ai_assist?: string;    // short hint of how AI can help with this task
+}
+
 export interface Task {
   id: string;
   deliverable_id: string | null;  // null for standalone calendar tasks
@@ -80,10 +85,12 @@ export interface Task {
   description: string | null;
   estimated_hours: number | null;
   status: TaskStatus;
-  scheduled_date: string | null;  // ISO date "YYYY-MM-DD"
+  due_date: string | null;        // ISO date "YYYY-MM-DD" — deadline (23:59:59 of that day)
+  scheduled_date: string | null;  // ISO date "YYYY-MM-DD" — when user plans to do it
   scheduled_time: number | null;  // hours float, e.g. 14.5 = 2:30pm
   completed_at: string | null;
   created_at: string;
+  metadata: TaskMetadata | null;
 }
 
 // AI planning types
@@ -112,6 +119,8 @@ export interface AITask {
   title: string;
   description: string;
   estimated_hours: number;
+  start_step?: string;
+  ai_assist?: string;
 }
 
 // Feasibility (replaces the old 4-filter validator)

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { generateDeliverableTasks } from "@/lib/ai";
+import { computeTaskDueDates } from "@/lib/utils";
 import type { InterviewAnswer } from "@/types";
 
 export async function POST(
@@ -15,7 +16,7 @@ export async function POST(
 
     const { data: deliverable, error: delivError } = await supabase
       .from("deliverables")
-      .select("*, tasks(id), goals(id, user_id, title, description, clarification_data, deliverables(order_index, title))")
+      .select("*, tasks(id), goals(id, user_id, title, description, start_date, clarification_data, deliverables(order_index, title))")
       .eq("id", id)
       .single();
 
@@ -28,6 +29,7 @@ export async function POST(
       user_id: string;
       title: string;
       description: string | null;
+      start_date: string;
       clarification_data: InterviewAnswer[] | null;
       deliverables: Array<{ order_index: number; title: string }>;
     } | null;
@@ -56,16 +58,36 @@ export async function POST(
       return NextResponse.json({ error: "No tasks generated" }, { status: 502 });
     }
 
+    // Slice the deliverable's window into per-task due_dates by cumulative
+    // estimated_hours. Window starts at max(today, project.start_date) so
+    // tasks aren't due in the past.
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const windowStart =
+      project.start_date && project.start_date > todayStr ? project.start_date : todayStr;
+    const deliverableDue = deliverable.due_date ?? windowStart;
+
+    const dueDates =
+      deliverableDue >= windowStart
+        ? computeTaskDueDates(tasks, windowStart, deliverableDue)
+        : tasks.map(() => null as string | null);
+
     const { data: createdTasks, error: insertError } = await supabase
       .from("tasks")
       .insert(
-        tasks.map((t) => ({
-          deliverable_id: id,
-          title: t.title,
-          description: t.description,
-          estimated_hours: t.estimated_hours,
-          status: "pending",
-        }))
+        tasks.map((t, i) => {
+          const meta: Record<string, string> = {};
+          if (t.start_step) meta.start_step = t.start_step;
+          if (t.ai_assist) meta.ai_assist = t.ai_assist;
+          return {
+            deliverable_id: id,
+            title: t.title,
+            description: t.description,
+            estimated_hours: t.estimated_hours,
+            status: "pending",
+            due_date: dueDates[i] ?? null,
+            metadata: Object.keys(meta).length > 0 ? meta : null,
+          };
+        })
       )
       .select();
 

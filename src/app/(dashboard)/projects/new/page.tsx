@@ -59,7 +59,8 @@ type Step =
   | "clarifying_failed"
   | "validating"
   | "feasibility_failed"
-  | "review";
+  | "review"
+  | "launching";
 
 type ClarifyStatus = "ok" | "empty" | "truncated" | "rate_limited" | "error";
 
@@ -144,6 +145,7 @@ export default function NewProjectPage() {
 
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [launchStatus, setLaunchStatus] = useState<string>("Creating project…");
 
   // Regenerate panel state — opens an inline textarea where the user types
   // free-form instructions ("make week 1 lighter") that get passed to the AI.
@@ -324,6 +326,8 @@ export default function NewProjectPage() {
     if (!projectTitle.trim()) { setError("Project title is required."); return; }
     setCreating(true);
     setError(null);
+    setStep("launching");
+    setLaunchStatus("Creating project…");
 
     try {
       const ordered = valid.map((d, i) => ({ ...d, order_index: i }));
@@ -348,11 +352,33 @@ export default function NewProjectPage() {
         }),
       });
       if (!res.ok) throw new Error();
-      const { project } = await res.json();
-      router.push(`/projects/${project.id}`);
+      const { project, first_deliverable_id } = await res.json();
+
+      // Generate micro-tasks for the first deliverable, then schedule them on
+      // the calendar. Failures here are non-fatal — the user can retry from
+      // the launch page.
+      if (first_deliverable_id) {
+        try {
+          setLaunchStatus("Generating micro-tasks…");
+          await fetch(`/api/deliverables/${first_deliverable_id}/generate-tasks`, {
+            method: "POST",
+          });
+          setLaunchStatus("Placing them on your calendar…");
+          await fetch(`/api/deliverables/${first_deliverable_id}/schedule`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ reschedule_all: false }),
+          });
+        } catch {
+          // swallow — launch page will show whatever made it through
+        }
+      }
+
+      router.push(`/projects/${project.id}/launch`);
     } catch {
       setError("Failed to launch project. Please try again.");
       setCreating(false);
+      setStep("review");
     }
   }
 
@@ -515,6 +541,23 @@ export default function NewProjectPage() {
         goalText={projectText}
         answers={interviewAnswers}
       />
+    );
+  }
+
+  // ── Step: launching — creating project, generating tasks, scheduling ──
+  if (step === "launching") {
+    return (
+      <div className="min-h-[calc(100vh-3.5rem)] flex items-center justify-center px-6">
+        <div className="flex flex-col items-center gap-4 text-center max-w-md">
+          <div className="w-12 h-12 rounded-full bg-primary-container flex items-center justify-center">
+            <Sparkles size={20} className="text-primary animate-pulse" />
+          </div>
+          <h2 className="text-lg font-bold text-on-surface">{launchStatus}</h2>
+          <p className="text-sm text-on-surface-variant">
+            We&apos;re generating micro-tasks for your first deliverable and arranging them on your calendar.
+          </p>
+        </div>
+      </div>
     );
   }
 

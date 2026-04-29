@@ -48,6 +48,14 @@ interface CalendarEvent {
   scheduledDate: string;
 }
 
+interface GoogleEventBlock {
+  id: string;
+  title: string;
+  startHour: number;
+  durationHours: number;
+  date: string;
+}
+
 function buildEvents(
   tasks: ScheduledTask[],
   defaultStartHour: number,
@@ -114,6 +122,23 @@ function SortableEventBlock({ event, overrideTop }: { event: CalendarEvent; over
   );
 }
 
+// Read-only Google Calendar event — muted, non-interactive, sits behind tasks.
+function GoogleEventBlockView({ event }: { event: GoogleEventBlock }) {
+  const top = event.startHour * HOUR_HEIGHT;
+  const height = Math.max(event.durationHours * HOUR_HEIGHT - 4, 24);
+  return (
+    <div
+      className="absolute left-0 right-0 mx-1 rounded-lg px-2.5 py-1 overflow-hidden bg-on-surface-variant/[0.06] border border-on-surface-variant/15 select-none pointer-events-none"
+      style={{ top, height, zIndex: 0 }}
+      title={event.title}
+    >
+      <p className="text-[11px] font-medium text-on-surface-variant/80 truncate leading-tight italic">
+        {event.title}
+      </p>
+    </div>
+  );
+}
+
 // Ghost shown in DragOverlay
 function GhostBlock({ event }: { event: CalendarEvent }) {
   const height = Math.max(event.durationHours * HOUR_HEIGHT - 4, 28);
@@ -168,6 +193,8 @@ export function ScheduleView({ todayTasks, tomorrowTasks, today, tomorrow, onTas
   const [activeEvent, setActiveEvent] = useState<CalendarEvent | null>(null);
   // Pixel top overrides set when a task is dragged to a specific time slot
   const [customTops, setCustomTops] = useState<Record<string, number>>({});
+  // Read-only Google Calendar events for the visible day(s).
+  const [googleEvents, setGoogleEvents] = useState<GoogleEventBlock[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const gridRef = useRef<HTMLDivElement>(null);
 
@@ -185,6 +212,44 @@ export function ScheduleView({ todayTasks, tomorrowTasks, today, tomorrow, onTas
       return [...prev.filter((id) => ids.includes(id)), ...ids.filter((id) => !prev.includes(id))];
     });
   }, [tomorrowTasks]);
+
+  // Fetch Google Calendar events for today + tomorrow once on mount.
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/google/events?from=${today}&to=${tomorrow}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: { connected: boolean; events: { id: string; title: string; startISO: string; endISO: string }[] } | null) => {
+        if (cancelled || !data?.connected) return;
+        const blocks: GoogleEventBlock[] = [];
+        for (const ev of data.events) {
+          const start = new Date(ev.startISO);
+          const end = new Date(ev.endISO);
+          // Split events that cross midnight into per-day chunks.
+          const startDay = start.toISOString().slice(0, 10);
+          const endDay = end.toISOString().slice(0, 10);
+          for (const day of [today, tomorrow]) {
+            if (day < startDay || day > endDay) continue;
+            const dayStart = new Date(`${day}T00:00:00`);
+            const dayEnd = new Date(`${day}T23:59:59.999`);
+            const s = start < dayStart ? dayStart : start;
+            const e = end > dayEnd ? dayEnd : end;
+            const startHour = s.getHours() + s.getMinutes() / 60;
+            const durHours = (e.getTime() - s.getTime()) / 3_600_000;
+            if (durHours <= 0) continue;
+            blocks.push({
+              id: `${ev.id}-${day}`,
+              title: ev.title,
+              startHour,
+              durationHours: durHours,
+              date: day,
+            });
+          }
+        }
+        setGoogleEvents(blocks);
+      })
+      .catch(() => { /* silent — calendar overlay is optional */ });
+    return () => { cancelled = true; };
+  }, [today, tomorrow]);
 
   // Scroll to 1h before current time on mount
   const scrolled = useRef(false);
@@ -352,6 +417,11 @@ export function ScheduleView({ todayTasks, tomorrowTasks, today, tomorrow, onTas
               ))}
               <NowLine hourHeight={HOUR_HEIGHT} />
               <div className="absolute left-10 right-0 top-0 bottom-0">
+                {googleEvents
+                  .filter((g) => g.date === displayDate)
+                  .map((g) => (
+                    <GoogleEventBlockView key={g.id} event={g} />
+                  ))}
                 <SortableContext items={displayOrder} strategy={verticalListSortingStrategy}>
                   {displayEvents.map((ev) => (
                     <SortableEventBlock key={ev.id} event={ev} overrideTop={customTops[ev.id]} />

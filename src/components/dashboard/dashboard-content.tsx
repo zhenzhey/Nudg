@@ -1,10 +1,12 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import Link from "next/link";
 import { getCurrentWeek, getGoalProgress } from "@/lib/utils";
 import { DeliverableCard } from "@/components/dashboard/deliverable-card";
+import { FocusTaskCard } from "@/components/dashboard/focus-task-card";
 import { ScheduleView } from "@/components/dashboard/schedule-view";
+import { ConflictWarningCard } from "@/components/dashboard/conflict-warning-card";
 import type { Project, Deliverable, Task } from "@/types";
 import { Zap, Search, Mic, Sparkles, Plus } from "lucide-react";
 import { InboxInput } from "@/components/dashboard/inbox-input";
@@ -20,19 +22,55 @@ export function DashboardContent({ projects: initialProjects, today, tomorrow }:
   const [selectedId, setSelectedId] = useState(initialProjects[0]?.id ?? "");
   const [aiQuery, setAiQuery] = useState("");
 
+  // Sync with refreshed server data after router.refresh().
+  useEffect(() => {
+    setProjects(initialProjects);
+  }, [initialProjects]);
+
   const selected = projects.find((p) => p.id === selectedId) ?? projects[0];
   const currentWeek = selected ? getCurrentWeek(selected.start_date) : 1;
   const progress = selected ? getGoalProgress(selected) : 0;
 
   const currentDeliverable = useMemo(() => {
     if (!selected) return null;
-    const week = getCurrentWeek(selected.start_date);
+    const sorted = [...(selected.deliverables ?? [])].sort(
+      (a: Deliverable, b: Deliverable) =>
+        (a.order_index ?? a.week_number ?? 0) - (b.order_index ?? b.week_number ?? 0)
+    );
     return (
-      (selected.deliverables ?? []).find(
-        (d: Deliverable) => d.week_number === week && d.status === "pending"
+      sorted.find(
+        (d: Deliverable) => d.status !== "submitted" && d.status !== "verified"
       ) ?? null
     );
   }, [selected]);
+
+  // Pick the "focus" task: nearest scheduled pending task in the selected
+  // project (any date, ordered by scheduled_date then scheduled_time). Fall
+  // back to the first pending task in the current deliverable. The task's own
+  // deliverable wins for the small header — even if it isn't currentDeliverable.
+  const focus = useMemo(() => {
+    if (!selected) return null;
+    const all = (selected.deliverables ?? []).flatMap((d: Deliverable) =>
+      (d.tasks ?? []).map((t) => ({ task: t, deliverable: d }))
+    );
+    const pending = all.filter(({ task }) => task.status !== "completed");
+
+    const scheduled = pending
+      .filter(({ task }) => task.scheduled_date != null)
+      .sort((a, b) => {
+        const da = a.task.scheduled_date ?? "";
+        const db = b.task.scheduled_date ?? "";
+        if (da !== db) return da.localeCompare(db);
+        return (a.task.scheduled_time ?? 0) - (b.task.scheduled_time ?? 0);
+      });
+    if (scheduled.length > 0) return scheduled[0];
+
+    if (currentDeliverable) {
+      const fallback = (currentDeliverable.tasks ?? []).find((t) => t.status !== "completed");
+      if (fallback) return { task: fallback, deliverable: currentDeliverable };
+    }
+    return null;
+  }, [selected, currentDeliverable]);
 
   const handleTaskUpdate = (taskId: string, patch: Partial<Task>) => {
     setProjects((prev) =>
@@ -125,6 +163,9 @@ export function DashboardContent({ projects: initialProjects, today, tomorrow }:
         </div>
       )}
 
+      {/* ── Google Calendar conflict warnings ───────────────── */}
+      <ConflictWarningCard />
+
       {/* ── Progress bar ────────────────────────────────────── */}
       <div className="bg-surface rounded-2xl border border-outline/20 shadow-card px-5 py-4">
         <div className="flex items-center justify-between mb-3">
@@ -146,11 +187,19 @@ export function DashboardContent({ projects: initialProjects, today, tomorrow }:
 
         {/* Left: deliverable + ask AI */}
         <div className="space-y-4">
+          {focus && selected && (
+            <FocusTaskCard
+              key={focus.task.id}
+              task={focus.task}
+              deliverable={focus.deliverable}
+              project={selected}
+              onTaskUpdate={handleTaskUpdate}
+            />
+          )}
           {currentDeliverable && selected ? (
             <DeliverableCard
               key={currentDeliverable.id}
               deliverable={currentDeliverable as Deliverable & { tasks: Task[] }}
-              project={selected}
               today={today}
               tomorrow={tomorrow}
               onTaskUpdate={handleTaskUpdate}

@@ -102,13 +102,24 @@ export async function POST(request: Request) {
       due_date: dueDateByIndex.get(d.order_index) ?? null,
     }));
 
-    const { error: delivError } = await supabase
+    const { data: insertedDeliverables, error: delivError } = await supabase
       .from("deliverables")
-      .insert(deliverablesToInsert);
+      .insert(deliverablesToInsert)
+      .select("id, order_index");
 
     if (delivError) throw delivError;
 
-    return NextResponse.json({ project: quest }, { status: 201 });
+    // Surface the first deliverable so the client can chain generate-tasks
+    // and schedule calls without an extra round trip.
+    const firstDeliverableId =
+      (insertedDeliverables ?? [])
+        .slice()
+        .sort((a, b) => a.order_index - b.order_index)[0]?.id ?? null;
+
+    return NextResponse.json(
+      { project: quest, first_deliverable_id: firstDeliverableId },
+      { status: 201 }
+    );
   } catch (err) {
     console.error("[api/projects POST]", err);
     return NextResponse.json({ error: "Failed to create project" }, { status: 500 });

@@ -16,6 +16,14 @@ export interface CalendarTask extends Task {
   project_id?: string | null;
 }
 
+interface GoogleEventBlock {
+  id: string;
+  title: string;
+  date: string;
+  startHour: number;
+  durationHours: number;
+}
+
 interface WeekCalendarProps {
   initialTasks: CalendarTask[];
   projects: Project[];
@@ -75,24 +83,68 @@ function formatWeekRange(weekStart: Date): string {
 function TaskBlock({
   task,
   onTaskClick,
+  onDragMove,
+  onDragEnd,
 }: {
   task: CalendarTask;
   onTaskClick: (task: CalendarTask, rect: DOMRect) => void;
+  onDragMove: (taskId: string, clientX: number, clientY: number) => void;
+  onDragEnd: (taskId: string, clientX: number, clientY: number) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const dragStartRef = useRef<{ x: number; y: number; offsetY: number; pointerId: number } | null>(null);
+  const movedRef = useRef(false);
+  const [dragOffset, setDragOffset] = useState<{ x: number; y: number } | null>(null);
+
   const top = (task.scheduled_time ?? 9) * HOUR_HEIGHT;
   const dur = task.estimated_hours ?? 1;
   const height = Math.max(dur * HOUR_HEIGHT - 3, 22);
   const isStandalone = !task.deliverable_id;
   const color = isStandalone ? "#6C7791" : "#5E6AD2";
 
+  const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    const rect = ref.current?.getBoundingClientRect();
+    dragStartRef.current = {
+      x: e.clientX,
+      y: e.clientY,
+      offsetY: rect ? e.clientY - rect.top : 0,
+      pointerId: e.pointerId,
+    };
+    movedRef.current = false;
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  };
+
+  const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!dragStartRef.current) return;
+    const dx = e.clientX - dragStartRef.current.x;
+    const dy = e.clientY - dragStartRef.current.y;
+    if (!movedRef.current && Math.hypot(dx, dy) < 4) return;
+    movedRef.current = true;
+    setDragOffset({ x: dx, y: dy });
+    onDragMove(task.id, e.clientX, e.clientY);
+  };
+
+  const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    const start = dragStartRef.current;
+    dragStartRef.current = null;
+    setDragOffset(null);
+    try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch {}
+    if (!start) return;
+    if (movedRef.current) {
+      onDragEnd(task.id, e.clientX, e.clientY);
+    } else if (ref.current) {
+      onTaskClick(task, ref.current.getBoundingClientRect());
+    }
+  };
+
   return (
     <div
       ref={ref}
-      className={`absolute overflow-hidden cursor-pointer select-none z-10 rounded-lg px-2 py-1.5 ${
+      className={`absolute overflow-hidden cursor-grab active:cursor-grabbing select-none z-10 rounded-lg px-2 py-1.5 ${
         task.status === "completed" ? "opacity-50" : ""
-      }`}
-      // Use inline style for all position/color — avoids Tailwind CSS grid quirks with right-N
+      } ${dragOffset ? "shadow-lg" : ""}`}
       style={{
         top,
         height,
@@ -102,11 +154,16 @@ function TaskBlock({
         border: `1px solid ${isStandalone ? "rgba(108,119,145,0.30)" : "rgba(94,106,210,0.30)"}`,
         borderLeftWidth: 3,
         borderLeftColor: color,
+        transform: dragOffset ? `translate(${dragOffset.x}px, ${dragOffset.y}px)` : undefined,
+        opacity: dragOffset ? 0.85 : undefined,
+        zIndex: dragOffset ? 50 : undefined,
+        touchAction: "none",
       }}
-      onClick={(e) => {
-        e.stopPropagation();
-        if (ref.current) onTaskClick(task, ref.current.getBoundingClientRect());
-      }}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
+      onPointerCancel={handlePointerUp}
+      onClick={(e) => e.stopPropagation()}
     >
       <p
         className={`font-semibold truncate leading-tight ${isStandalone ? "text-tertiary" : "text-primary-dim"}`}
@@ -122,6 +179,26 @@ function TaskBlock({
           {formatTime(task.scheduled_time ?? 9)} · {dur}h
         </p>
       )}
+    </div>
+  );
+}
+
+// Read-only Google Calendar event — muted, behind tasks, non-interactive.
+function GoogleEventBlockView({ event }: { event: GoogleEventBlock }) {
+  const top = event.startHour * HOUR_HEIGHT;
+  const height = Math.max(event.durationHours * HOUR_HEIGHT - 3, 18);
+  return (
+    <div
+      className="absolute rounded-lg px-2 py-1 overflow-hidden bg-on-surface-variant/[0.06] border border-on-surface-variant/15 select-none pointer-events-none"
+      style={{ top, height, left: 4, right: 4, zIndex: 0 }}
+      title={event.title}
+    >
+      <p
+        className="font-medium truncate leading-tight italic text-on-surface-variant/80"
+        style={{ fontSize: height < 28 ? 10 : 11 }}
+      >
+        {event.title}
+      </p>
     </div>
   );
 }
@@ -161,13 +238,18 @@ function NowLineOverlay() {
 // ── Day Column ────────────────────────────────────────────────────
 
 function DayColumn({
-  date, tasks, isToday, onSlotClick, onTaskClick,
+  date, tasks, googleEvents, isToday, isDropTarget, onSlotClick, onTaskClick, onTaskDragMove, onTaskDragEnd, columnRef,
 }: {
   date: string;
   tasks: CalendarTask[];
+  googleEvents: GoogleEventBlock[];
   isToday: boolean;
+  isDropTarget: boolean;
   onSlotClick: (date: string, hour: number, x: number, y: number) => void;
   onTaskClick: (task: CalendarTask, rect: DOMRect) => void;
+  onTaskDragMove: (taskId: string, clientX: number, clientY: number) => void;
+  onTaskDragEnd: (taskId: string, clientX: number, clientY: number) => void;
+  columnRef: (el: HTMLDivElement | null) => void;
 }) {
   const handleClick = (e: React.MouseEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -177,11 +259,22 @@ function DayColumn({
 
   return (
     <div
-      className={`relative border-l border-outline/10 cursor-cell ${isToday ? "bg-primary/[0.025]" : ""}`}
+      ref={columnRef}
+      data-day-column={date}
+      className={`relative border-l border-outline/10 cursor-cell ${isToday ? "bg-primary/[0.025]" : ""} ${isDropTarget ? "bg-primary/10" : ""}`}
       style={{ height: TOTAL_HOURS * HOUR_HEIGHT }}
       onClick={handleClick}
     >
-      {tasks.map((t) => <TaskBlock key={t.id} task={t} onTaskClick={onTaskClick} />)}
+      {googleEvents.map((g) => <GoogleEventBlockView key={g.id} event={g} />)}
+      {tasks.map((t) => (
+        <TaskBlock
+          key={t.id}
+          task={t}
+          onTaskClick={onTaskClick}
+          onDragMove={onTaskDragMove}
+          onDragEnd={onTaskDragEnd}
+        />
+      ))}
     </div>
   );
 }
@@ -551,11 +644,14 @@ export function WeekCalendar({ initialTasks, projects, currentWeekStart }: WeekC
   const today = isoDate(new Date());
   const [weekOffset, setWeekOffset] = useState(0);
   const [tasks, setTasks] = useState<CalendarTask[]>(initialTasks);
+  const [googleEvents, setGoogleEvents] = useState<GoogleEventBlock[]>([]);
   const [isLoadingWeek, setIsLoadingWeek] = useState(false);
   const [selectedTask, setSelectedTask] = useState<CalendarTask | null>(null);
   const [selectedTaskRect, setSelectedTaskRect] = useState<DOMRect | null>(null);
   const [newTaskSlot, setNewTaskSlot] = useState<SlotClick | null>(null);
+  const [dragHoverDay, setDragHoverDay] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const dayColumnRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
   const weekStartDate = addDays(getMondayOf(new Date(currentWeekStart + "T00:00:00")), weekOffset * 7);
   const weekStartStr = isoDate(weekStartDate);
@@ -583,9 +679,56 @@ export function WeekCalendar({ initialTasks, projects, currentWeekStart }: WeekC
       .finally(() => setIsLoadingWeek(false));
   }, [weekOffset, weekStartStr, initialTasks]);
 
+  // Load Google Calendar events for the visible week (best-effort).
+  const weekEnd = weekDates[6];
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/google/events?from=${weekStartStr}&to=${weekEnd}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: { connected: boolean; events: { id: string; title: string; startISO: string; endISO: string }[] } | null) => {
+        if (cancelled || !data?.connected) {
+          if (!cancelled) setGoogleEvents([]);
+          return;
+        }
+        const blocks: GoogleEventBlock[] = [];
+        for (const ev of data.events) {
+          const start = new Date(ev.startISO);
+          const end = new Date(ev.endISO);
+          const startDay = isoDate(start);
+          const endDay = isoDate(end);
+          for (const day of weekDates) {
+            if (day < startDay || day > endDay) continue;
+            const dayStart = new Date(`${day}T00:00:00`);
+            const dayEnd = new Date(`${day}T23:59:59.999`);
+            const s = start < dayStart ? dayStart : start;
+            const e = end > dayEnd ? dayEnd : end;
+            const startHour = s.getHours() + s.getMinutes() / 60;
+            const durHours = (e.getTime() - s.getTime()) / 3_600_000;
+            if (durHours <= 0) continue;
+            blocks.push({
+              id: `${ev.id}-${day}`,
+              title: ev.title,
+              date: day,
+              startHour,
+              durationHours: durHours,
+            });
+          }
+        }
+        setGoogleEvents(blocks);
+      })
+      .catch(() => { if (!cancelled) setGoogleEvents([]); });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [weekStartStr, weekEnd]);
+
   const tasksForDay = useCallback(
     (date: string) => tasks.filter((t) => t.scheduled_date === date && t.scheduled_time != null),
     [tasks]
+  );
+
+  const googleEventsForDay = useCallback(
+    (date: string) => googleEvents.filter((g) => g.date === date),
+    [googleEvents]
   );
 
   const handleTaskClick = (task: CalendarTask, rect: DOMRect) => {
@@ -639,6 +782,41 @@ export function WeekCalendar({ initialTasks, projects, currentWeekStart }: WeekC
       });
     }
   }, [selectedTask]);
+
+  const findDropTarget = useCallback((clientX: number, clientY: number): { date: string; hour: number } | null => {
+    for (const [date, el] of dayColumnRefs.current) {
+      const r = el.getBoundingClientRect();
+      if (clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom) {
+        const hour = Math.max(0, Math.min(23.5, Math.round((clientY - r.top) / HOUR_HEIGHT * 2) / 2));
+        return { date, hour };
+      }
+    }
+    return null;
+  }, []);
+
+  const handleTaskDragMove = useCallback((_taskId: string, clientX: number, clientY: number) => {
+    const target = findDropTarget(clientX, clientY);
+    setDragHoverDay(target?.date ?? null);
+  }, [findDropTarget]);
+
+  const handleTaskDragEnd = useCallback(async (taskId: string, clientX: number, clientY: number) => {
+    setDragHoverDay(null);
+    const target = findDropTarget(clientX, clientY);
+    if (!target) return;
+    const task = tasks.find((t) => t.id === taskId);
+    if (!task) return;
+    if (task.scheduled_date === target.date && task.scheduled_time === target.hour) return;
+    setTasks((prev) =>
+      prev.map((t) =>
+        t.id === taskId ? { ...t, scheduled_date: target.date, scheduled_time: target.hour } : t
+      )
+    );
+    await fetch(`/api/tasks/${taskId}/schedule`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scheduled_date: target.date, scheduled_time: target.hour }),
+    });
+  }, [findDropTarget, tasks]);
 
   const handleCreateTask = async (title: string, description: string) => {
     if (!newTaskSlot) return;
@@ -748,9 +926,17 @@ export function WeekCalendar({ initialTasks, projects, currentWeekStart }: WeekC
               key={date}
               date={date}
               tasks={tasksForDay(date)}
+              googleEvents={googleEventsForDay(date)}
               isToday={date === today}
+              isDropTarget={dragHoverDay === date}
+              columnRef={(el) => {
+                if (el) dayColumnRefs.current.set(date, el);
+                else dayColumnRefs.current.delete(date);
+              }}
               onSlotClick={handleSlotClick}
               onTaskClick={handleTaskClick}
+              onTaskDragMove={handleTaskDragMove}
+              onTaskDragEnd={handleTaskDragEnd}
             />
           ))}
         </div>

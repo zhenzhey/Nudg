@@ -8,6 +8,7 @@ import type {
   InterviewAnswer,
   InterviewQuestion,
   AITask,
+  TaskMetadata,
 } from "@/types";
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
@@ -421,6 +422,12 @@ RULES:
 - Total effort budget for this deliverable: ${budget} hours — your tasks' estimated_hours MUST sum to approximately this number (within ±15%). This budget was set upstream; do not contradict it.
 - No vague tasks ("work on X", "start Y"). Each task must be independently completable.
 
+Each task ALSO needs two friction-reducing fields:
+- start_step: a single concrete sub-action that takes ≤5 minutes and breaks inertia. It must be physical/observable ("open the editor and create file X", "draft a one-line title in Notes", "skim the docs page Y"). Never abstract ("think about", "plan").
+- ai_assist: one short sentence telling the user exactly what they could ask an AI to do to make this task easier (e.g. "Ask AI to draft a 3-section outline you can edit"). Be specific to THIS task, not generic.
+
+Both fields must be ≤140 chars, written as direct instructions to the user (imperative voice).
+
 Return ONLY valid JSON. No markdown.`,
     generationConfig: {
       temperature: 0.3,
@@ -456,7 +463,13 @@ Return ONLY valid JSON. No markdown.`,
   lines.push(`Return JSON:
 {
   "tasks": [
-    { "title": "string", "description": "string", "estimated_hours": number }
+    {
+      "title": "string",
+      "description": "string",
+      "estimated_hours": number,
+      "start_step": "string — ≤5 min kickoff action, ≤140 chars",
+      "ai_assist": "string — concrete AI help suggestion, ≤140 chars"
+    }
   ]
 }`);
 
@@ -472,8 +485,56 @@ Return ONLY valid JSON. No markdown.`,
       title: String(t.title ?? "").trim(),
       description: String(t.description ?? "").trim(),
       estimated_hours: Math.max(0.25, Math.min(perTaskMax, Number(t.estimated_hours) || 1.0)),
+      start_step: typeof t.start_step === "string" ? t.start_step.trim().slice(0, 200) : undefined,
+      ai_assist: typeof t.ai_assist === "string" ? t.ai_assist.trim().slice(0, 200) : undefined,
     }));
     return tasks.filter((t) => t.title.length > 0).slice(0, maxTasks);
+  });
+}
+
+// Generate just the friction-reducing metadata for an existing task. Used by
+// the dashboard to lazily enrich tasks created before the metadata field
+// existed (or by the legacy task generator).
+export async function generateTaskMetadata(args: {
+  taskTitle: string;
+  taskDescription: string | null;
+  deliverableTitle: string;
+  projectTitle: string;
+}): Promise<TaskMetadata> {
+  const model = genAI.getGenerativeModel({
+    model: "gemini-2.5-flash",
+    systemInstruction: `You produce two friction-reducing fields for a single existing task.
+
+start_step: a single concrete sub-action that takes ≤5 minutes and breaks inertia. Physical/observable ("open the editor and create file X", "draft a one-line title in Notes"). Never abstract ("think about", "plan").
+ai_assist: one short sentence telling the user exactly what to ask an AI for to make this task easier. Specific to THIS task, not generic.
+
+Both ≤140 chars, imperative voice. Return ONLY valid JSON.`,
+    generationConfig: {
+      temperature: 0.3,
+      maxOutputTokens: 1024,
+      responseMimeType: "application/json",
+    },
+  });
+
+  const prompt = [
+    `Project: "${args.projectTitle}"`,
+    `Deliverable: "${args.deliverableTitle}"`,
+    `Task title: "${args.taskTitle}"`,
+    args.taskDescription ? `Task description: "${args.taskDescription}"` : "",
+    ``,
+    `Return JSON: { "start_step": "string", "ai_assist": "string" }`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  return await withRetry(async () => {
+    const result = await model.generateContent(prompt);
+    const text = stripCodeFences(result.response.text());
+    const parsed = JSON.parse(text) as Partial<TaskMetadata>;
+    return {
+      start_step: typeof parsed.start_step === "string" ? parsed.start_step.trim().slice(0, 200) : undefined,
+      ai_assist: typeof parsed.ai_assist === "string" ? parsed.ai_assist.trim().slice(0, 200) : undefined,
+    };
   });
 }
 
