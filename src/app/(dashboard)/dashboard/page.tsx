@@ -6,8 +6,14 @@ import type { Metadata } from "next";
 
 export const metadata: Metadata = { title: "Dashboard" };
 
+// Local date in YYYY-MM-DD. Using toISOString here would return UTC, which
+// shifts the day forward for users west of UTC during the evening — that's
+// how the dashboard ended up labelled "Apr 30" at 8pm Pacific on Apr 29.
 function isoDate(d: Date): string {
-  return d.toISOString().split("T")[0];
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 
 export default async function DashboardPage() {

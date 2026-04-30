@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { Navbar } from "@/components/layout/navbar";
+import { ActiveProjectProvider } from "@/components/layout/active-project-context";
 
 export default async function DashboardLayout({
   children,
@@ -15,9 +16,11 @@ export default async function DashboardLayout({
   }
 
   return (
-    <div className="min-h-screen bg-background">
-      <Navbar userEmail={user.email} />
-      <main>{children}</main>
-    </div>
+    <ActiveProjectProvider>
+      <div className="min-h-screen bg-background">
+        <Navbar userEmail={user.email} />
+        <main>{children}</main>
+      </div>
+    </ActiveProjectProvider>
   );
 }

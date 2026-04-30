@@ -5,13 +5,15 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
-import { LayoutDashboard, FolderKanban, CalendarDays, Inbox, LogOut, ChevronDown } from "lucide-react";
+import { LogOut, ChevronDown, Inbox } from "lucide-react";
 import { NavbarInboxPopover } from "@/components/layout/navbar-inbox-popover";
+import { useActiveProject } from "@/components/layout/active-project-context";
 
-const navItems = [
-  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/projects", label: "Projects", icon: FolderKanban },
-  { href: "/calendar", label: "Calendar", icon: CalendarDays },
+const navTabs = [
+  { href: "/dashboard", label: "Dashboard", match: (p: string) => p === "/dashboard" || p.startsWith("/dashboard/") },
+  { href: "/projects", label: "Map", match: (p: string) => p === "/projects" || p.startsWith("/projects/") },
+  { href: "/calendar", label: "Calendar", match: (p: string) => p === "/calendar" || p.startsWith("/calendar/") },
+  { href: "/inbox", label: "Portfolio", match: (p: string) => p === "/inbox" || p.startsWith("/inbox/") },
 ];
 
 interface NavbarProps {
@@ -30,7 +32,7 @@ function UserMenu({ userEmail }: { userEmail: string }) {
   const openMenu = () => {
     if (buttonRef.current) {
       const r = buttonRef.current.getBoundingClientRect();
-      setPos({ top: r.bottom + 8, right: window.innerWidth - r.right });
+      setPos({ top: r.bottom + 6, right: window.innerWidth - r.right });
     }
     setOpen(true);
   };
@@ -59,24 +61,24 @@ function UserMenu({ userEmail }: { userEmail: string }) {
       <button
         ref={buttonRef}
         onClick={openMenu}
-        className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-sm text-on-surface-variant hover:text-on-surface hover:bg-surface-container transition-colors"
+        className="flex items-center gap-1 px-1.5 py-1 rounded text-[12px] text-atlas-dim hover:text-atlas-fg transition-colors"
       >
-        <span className="font-medium">{username}</span>
-        <ChevronDown size={13} className={cn("transition-transform", open && "rotate-180")} />
+        <span>{username}</span>
+        <ChevronDown size={11} className={cn("transition-transform", open && "rotate-180")} />
       </button>
 
       {open && (
         <div
           ref={panelRef}
           style={{ position: "fixed", top: pos.top, right: pos.right, minWidth: 180 }}
-          className="bg-surface border border-outline/20 rounded-xl shadow-[0_8px_24px_rgba(0,0,0,0.10)] p-1 z-[200]"
+          className="bg-atlas-panel border border-atlas-border rounded-lg shadow-card p-1 z-[200]"
         >
-          <div className="px-3 py-2 border-b border-outline/10 mb-1">
-            <p className="text-[11px] text-on-surface-variant truncate">{userEmail}</p>
+          <div className="px-3 py-2 border-b border-atlas-border mb-1">
+            <p className="text-[11px] text-atlas-dim truncate">{userEmail}</p>
           </div>
           <button
             onClick={handleSignOut}
-            className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-on-surface-variant hover:text-danger hover:bg-error-container/40 transition-colors"
+            className="w-full flex items-center gap-2 px-3 py-2 rounded text-[12px] text-atlas-dim hover:text-atlas-fg hover:bg-atlas-panel-2 transition-colors"
           >
             <LogOut size={13} />
             Sign out
@@ -89,54 +91,80 @@ function UserMenu({ userEmail }: { userEmail: string }) {
 
 export function Navbar({ userEmail }: NavbarProps) {
   const pathname = usePathname();
+  const username = userEmail ? userEmail.split("@")[0] : null;
+  const { active } = useActiveProject();
 
   return (
-    <header className="sticky top-0 z-50 h-14 bg-surface border-b border-outline/50 flex items-center justify-between px-6 shadow-card">
-      <Link href="/dashboard" className="flex items-center gap-2.5">
-        <span className="w-7 h-7 bg-neutral rounded-lg flex items-center justify-center text-on-neutral text-xs font-black">
-          N
-        </span>
-        <span className="font-black text-base tracking-tight text-on-surface">Nudg</span>
-      </Link>
+    <header className="sticky top-0 z-50 h-11 bg-atlas-panel border-b border-atlas-border flex items-center px-4 gap-[18px]">
+      {/* Logo + breadcrumb */}
+      <div className="flex items-center gap-2 text-[13px] shrink-0 min-w-0">
+        <Link href="/dashboard" className="flex items-center gap-2 shrink-0">
+          <span className="w-[22px] h-[22px] rounded-md bg-gradient-to-br from-atlas-fg to-atlas-dim text-atlas-bg grid place-items-center font-bold text-[11px]">
+            N
+          </span>
+          <span className="font-semibold tracking-[-0.005em] text-atlas-fg">Nudg</span>
+        </Link>
+        {username && (
+          <>
+            <span className="text-atlas-dimmer">/</span>
+            <span className="text-atlas-dim shrink-0">{username}</span>
+          </>
+        )}
+        {active?.title && (
+          <>
+            <span className="text-atlas-dimmer">/</span>
+            <span className="text-atlas-fg font-medium truncate max-w-[260px]">{active.title}</span>
+          </>
+        )}
+      </div>
 
-      <nav className="hidden md:flex items-center gap-1">
-        {navItems.map(({ href, label, icon: Icon }) => (
-          <Link
-            key={href}
-            href={href}
-            className={cn(
-              "flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors",
-              pathname === href || pathname.startsWith(href + "/")
-                ? "bg-surface-container text-on-surface"
-                : "text-on-surface-variant hover:text-on-surface hover:bg-surface-container"
-            )}
-          >
-            <Icon size={15} />
-            {label}
-          </Link>
-        ))}
+      {/* Centered tabs */}
+      <nav className="flex-1 hidden md:flex items-center justify-center gap-0.5 text-[12px]">
+        {navTabs.map((tab) => {
+          const active = tab.match(pathname);
+          return (
+            <Link
+              key={tab.href}
+              href={tab.href}
+              className={cn(
+                "px-2.5 py-[5px] rounded-md transition-colors",
+                active
+                  ? "bg-atlas-panel-2 text-atlas-fg font-medium"
+                  : "text-atlas-dim hover:text-atlas-fg"
+              )}
+            >
+              {tab.label}
+            </Link>
+          );
+        })}
       </nav>
 
-      <div className="flex items-center gap-2">
-        {/* Inbox link + quick capture button */}
+      {/* Right cluster */}
+      <div className="flex items-center gap-2.5 text-atlas-dim text-[11px]">
+        <span className="inline-flex items-center gap-1 px-2 py-[3px] rounded bg-atlas-ai/15 text-atlas-ai">
+          <span
+            className="w-1.5 h-1.5 rounded-full bg-atlas-ai"
+            style={{ boxShadow: "0 0 6px #0891b2" }}
+          />
+          AI on
+        </span>
+        <span className="px-2 py-[3px] border border-atlas-border rounded font-mono text-[10px] text-atlas-dim">
+          ⌘K
+        </span>
         <Link
           href="/inbox"
-          className={cn(
-            "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors",
-            pathname === "/inbox"
-              ? "bg-surface-container text-on-surface"
-              : "text-on-surface-variant hover:text-on-surface hover:bg-surface-container"
-          )}
+          className="text-atlas-dim hover:text-atlas-fg transition-colors"
+          aria-label="Inbox"
         >
-          <Inbox size={15} />
-          <span className="hidden md:block">Inbox</span>
+          <Inbox size={14} />
         </Link>
         <NavbarInboxPopover />
-
-        {/* Divider */}
-        <div className="w-px h-4 bg-outline/20 mx-1" />
-
-        {userEmail && <UserMenu userEmail={userEmail} />}
+        {userEmail && (
+          <>
+            <div className="w-px h-3.5 bg-atlas-border" />
+            <UserMenu userEmail={userEmail} />
+          </>
+        )}
       </div>
     </header>
   );

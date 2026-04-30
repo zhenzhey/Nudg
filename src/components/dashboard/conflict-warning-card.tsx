@@ -1,9 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { AlertTriangle, X, Wand2, Pencil } from "lucide-react";
+import { Sparkles } from "lucide-react";
 
 interface Conflict {
   task: {
@@ -26,11 +25,6 @@ function fmtHour(h: number): string {
   return m === 0 ? `${display}${ampm}` : `${display}:${m.toString().padStart(2, "0")}${ampm}`;
 }
 
-function fmtDate(iso: string): string {
-  const d = new Date(iso + "T00:00:00");
-  return d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
-}
-
 function fmtRange(startISO: string, endISO: string): string {
   const s = new Date(startISO);
   const e = new Date(endISO);
@@ -39,18 +33,31 @@ function fmtRange(startISO: string, endISO: string): string {
   return `${fmtHour(sh)}–${fmtHour(eh)}`;
 }
 
+function relativeTime(secondsAgo: number): string {
+  if (secondsAgo < 60) return "just now";
+  const mins = Math.round(secondsAgo / 60);
+  if (mins < 60) return `${mins} minute${mins === 1 ? "" : "s"} ago`;
+  const hrs = Math.round(mins / 60);
+  return `${hrs} hour${hrs === 1 ? "" : "s"} ago`;
+}
+
 export function ConflictWarningCard() {
   const router = useRouter();
   const [conflicts, setConflicts] = useState<Conflict[]>([]);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [dismissedIds, setDismissedIds] = useState<Set<string>>(new Set());
   const [loaded, setLoaded] = useState(false);
+  const [fetchedAt, setFetchedAt] = useState<number | null>(null);
 
   const refresh = async () => {
     try {
       const res = await fetch("/api/google/conflicts");
       if (!res.ok) return;
       const data = (await res.json()) as { connected: boolean; conflicts: Conflict[] };
-      if (data.connected) setConflicts(data.conflicts);
+      if (data.connected) {
+        setConflicts(data.conflicts);
+        setFetchedAt(Date.now());
+      }
     } catch {
       // Silent — overlay is optional.
     } finally {
@@ -62,7 +69,8 @@ export function ConflictWarningCard() {
     refresh();
   }, []);
 
-  const handleKeep = async (taskId: string) => {
+  const handleDismiss = async (taskId: string) => {
+    setDismissedIds((prev) => new Set(prev).add(taskId));
     setBusyId(taskId);
     try {
       await fetch(`/api/tasks/${taskId}/dismiss-conflict`, { method: "POST" });
@@ -75,10 +83,6 @@ export function ConflictWarningCard() {
   const handleSmartReschedule = async (taskId: string) => {
     setBusyId(taskId);
     try {
-      // Clearing scheduled_date triggers the route to drop the task; then we
-      // immediately re-schedule with no date, letting the auto-slot logic pick.
-      // Simpler: pass scheduled_date back as today so the slot finder runs and
-      // skips the now-busy interval (since it reads Google busy).
       const today = new Date().toISOString().slice(0, 10);
       const res = await fetch(`/api/tasks/${taskId}/schedule`, {
         method: "PATCH",
@@ -86,7 +90,6 @@ export function ConflictWarningCard() {
         body: JSON.stringify({ scheduled_date: today }),
       });
       if (res.status === 409) {
-        // No free slot today — try tomorrow.
         const tomorrow = new Date();
         tomorrow.setDate(tomorrow.getDate() + 1);
         await fetch(`/api/tasks/${taskId}/schedule`, {
@@ -102,72 +105,45 @@ export function ConflictWarningCard() {
     }
   };
 
-  if (!loaded || conflicts.length === 0) return null;
+  if (!loaded) return null;
+  const visible = conflicts.filter((c) => !dismissedIds.has(c.task.id));
+  if (visible.length === 0) return null;
+
+  // Show only the first conflict in the slim strip; if there are multiple, the
+  // count nudges the user to the calendar page where they can resolve in bulk.
+  const c = visible[0];
+  const isBusy = busyId === c.task.id;
+  const ageSeconds = fetchedAt ? Math.round((Date.now() - fetchedAt) / 1000) : 0;
 
   return (
-    <div className="bg-warning-muted border border-warning/40 rounded-2xl p-4 shadow-card">
-      <div className="flex items-start gap-3 mb-3">
-        <div className="w-8 h-8 bg-warning/15 rounded-xl flex items-center justify-center shrink-0">
-          <AlertTriangle size={16} className="text-warning" />
-        </div>
-        <div className="flex-1">
-          <h3 className="text-sm font-bold text-on-surface">
-            {conflicts.length === 1 ? "Schedule conflict" : `${conflicts.length} schedule conflicts`}
-          </h3>
-          <p className="text-xs text-on-surface-variant mt-0.5">
-            New events on your Google Calendar overlap with already-scheduled tasks.
-          </p>
-        </div>
+    <div className="mx-6 mt-3 px-3.5 py-3 border border-atlas-warn/40 bg-atlas-warn/10 rounded-lg flex items-center gap-3 text-[12px]">
+      <div className="w-[22px] h-[22px] rounded-full bg-atlas-warn text-white grid place-items-center text-[12px] font-semibold shrink-0">
+        !
       </div>
-
-      <div className="space-y-2">
-        {conflicts.map((c) => {
-          const isBusy = busyId === c.task.id;
-          return (
-            <div
-              key={c.task.id}
-              className="bg-surface rounded-xl border border-outline/15 p-3"
-            >
-              <div className="flex items-start justify-between gap-3 mb-2">
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-semibold text-on-surface truncate">{c.task.title}</p>
-                  <p className="text-xs text-on-surface-variant mt-0.5">
-                    {fmtDate(c.task.scheduled_date)} · {fmtHour(c.task.scheduled_time)}
-                    {c.task.estimated_hours ? ` · ${c.task.estimated_hours}h` : ""}
-                  </p>
-                  <p className="text-[11px] text-warning mt-1 truncate">
-                    Conflicts with: <span className="font-medium">{c.blocking_event.title}</span>
-                    {" "}({fmtRange(c.blocking_event.startISO, c.blocking_event.endISO)})
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-1.5 flex-wrap">
-                <button
-                  onClick={() => handleKeep(c.task.id)}
-                  disabled={isBusy}
-                  className="inline-flex items-center gap-1 text-xs font-medium px-2.5 py-1.5 rounded-lg bg-surface-container hover:bg-surface-container/80 text-on-surface-variant disabled:opacity-50 transition-colors"
-                >
-                  <X size={12} /> Keep
-                </button>
-                <button
-                  onClick={() => handleSmartReschedule(c.task.id)}
-                  disabled={isBusy}
-                  className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-primary text-on-primary hover:opacity-90 disabled:opacity-50 transition-opacity"
-                >
-                  <Wand2 size={12} /> Smart reschedule
-                </button>
-                <Link
-                  href={`/calendar?task=${c.task.id}&date=${c.task.scheduled_date}`}
-                  className="inline-flex items-center gap-1 text-xs font-medium px-2.5 py-1.5 rounded-lg border border-outline/30 hover:bg-surface-container text-on-surface transition-colors"
-                >
-                  <Pencil size={12} /> Edit manually
-                </Link>
-              </div>
-            </div>
-          );
-        })}
+      <div className="flex-1 min-w-0">
+        <p className="font-semibold text-atlas-fg truncate">
+          Schedule conflict — {c.blocking_event.title} {fmtRange(c.blocking_event.startISO, c.blocking_event.endISO)} overlaps {c.task.title}
+        </p>
+        <p className="text-atlas-dim text-[11px] mt-0.5">
+          Pulled from Google Calendar {relativeTime(ageSeconds)}
+          {visible.length > 1 ? ` · ${visible.length - 1} more` : ""}
+        </p>
       </div>
+      <button
+        onClick={() => handleSmartReschedule(c.task.id)}
+        disabled={isBusy}
+        className="px-2.5 py-1.5 border border-atlas-border bg-atlas-panel rounded-md text-[11px] flex items-center gap-1.5 text-atlas-fg hover:bg-atlas-panel-2 disabled:opacity-50 transition-colors"
+      >
+        <Sparkles size={11} className="text-atlas-ai" />
+        Smart reschedule
+      </button>
+      <button
+        onClick={() => handleDismiss(c.task.id)}
+        disabled={isBusy}
+        className="px-2.5 py-1.5 text-atlas-dim text-[11px] hover:text-atlas-fg transition-colors disabled:opacity-50"
+      >
+        Dismiss
+      </button>
     </div>
   );
 }

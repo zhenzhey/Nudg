@@ -9,82 +9,101 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        // ── Core palette (from design system reference) ──────────
-        background: "#ECEFFE",      // light lavender page bg
+        // ── Core palette (Atlas — cool neutral + cyan AI accent) ──────────
+        // The whole app uses these tokens; the old lavender/purple theme is retired.
+        background: "#fafbfc",      // atlas warm-white page bg
         surface: {
-          DEFAULT: "#FFFFFF",       // white — cards, panels
-          muted: "#F4F5FF",         // very slightly tinted white
-          container: "#EEF0FF",     // light lavender container
-          "container-low": "#E8EAFF",
-          "container-lowest": "#FFFFFF",
-          "container-high": "#D8DAFF",
-          "container-highest": "#CDD0FF",
+          DEFAULT: "#ffffff",       // atlas panel — cards, sheets
+          muted: "#f3f5f8",         // atlas panel-2
+          container: "#f3f5f8",     // atlas panel-2
+          "container-low": "#f6f8fa",
+          "container-lowest": "#ffffff",
+          "container-high": "#eaeef3",
+          "container-highest": "#e3e7ec",
         },
         primary: {
-          DEFAULT: "#5E6AD2",       // purple-blue accent
-          dim: "#4F5ABE",
-          hover: "#4F5ABE",
-          light: "#7B86E0",
-          container: "#E8EAFF",
-          muted: "rgba(94, 106, 210, 0.12)",
+          DEFAULT: "#0891b2",       // atlas cyan-700 — quiet AI accent, matches design
+          dim: "#0e7490",
+          hover: "#0e7490",
+          light: "#22d3ee",
+          container: "#cffafe",     // atlas ai-soft
+          muted: "rgba(8, 145, 178, 0.12)",
         },
         neutral: {
-          DEFAULT: "#0F172A",       // dark navy — used for dark CTAs
-          muted: "rgba(15, 23, 42, 0.08)",
+          DEFAULT: "#0f1722",       // atlas fg — used for dark CTAs
+          muted: "rgba(15, 23, 34, 0.08)",
         },
         secondary: {
-          DEFAULT: "#78767A",
-          container: "#F0EFF1",
+          DEFAULT: "#5b6878",       // atlas dim
+          container: "#f3f5f8",
         },
         tertiary: {
-          DEFAULT: "#6C7791",       // blue-gray, used for secondary text
-          container: "#E8EAF5",
+          DEFAULT: "#5b6878",       // atlas dim — secondary text
+          container: "#eaeef3",
         },
         error: {
           DEFAULT: "#B91C1C",
           container: "#FEE2E2",
         },
         outline: {
-          DEFAULT: "#CBD0E0",
-          variant: "#D8DAF0",
+          DEFAULT: "#e3e7ec",       // atlas border
+          variant: "#c7cfd9",       // atlas border-hi
         },
         // "on-" tokens
-        "on-surface": "#0F172A",          // very dark navy — primary text
-        "on-surface-variant": "#6C7791",  // tertiary — secondary text
-        "on-background": "#0F172A",
-        "on-primary": "#FFFFFF",
-        "on-neutral": "#FFFFFF",
-        "on-secondary": "#FFFFFF",
-        "on-tertiary": "#FFFFFF",
-        "on-error": "#FFFFFF",
-        "inverse-on-surface": "#9BA3C0",  // placeholder text
+        "on-surface": "#0f1722",          // atlas fg — primary text
+        "on-surface-variant": "#5b6878",  // atlas dim — secondary text
+        "on-background": "#0f1722",
+        "on-primary": "#ffffff",
+        "on-neutral": "#ffffff",
+        "on-secondary": "#ffffff",
+        "on-tertiary": "#ffffff",
+        "on-error": "#ffffff",
+        "inverse-on-surface": "#9aa5b3",  // atlas dimmer — placeholder
         // Backward-compat aliases
-        bg: "#ECEFFE",
+        bg: "#fafbfc",
         border: {
-          DEFAULT: "rgba(203, 208, 224, 0.6)",
-          2: "rgba(203, 208, 224, 0.9)",
+          DEFAULT: "rgba(227, 231, 236, 0.8)",
+          2: "rgba(199, 207, 217, 0.9)",
         },
         text: {
-          primary: "#0F172A",
-          secondary: "#6C7791",
-          muted: "#9BA3C0",
+          primary: "#0f1722",
+          secondary: "#5b6878",
+          muted: "#9aa5b3",
         },
         accent: {
-          DEFAULT: "#7B86E0",
-          muted: "rgba(123, 134, 224, 0.12)",
+          DEFAULT: "#0891b2",
+          muted: "rgba(8, 145, 178, 0.12)",
         },
         success: {
-          DEFAULT: "#15803D",
+          DEFAULT: "#0f8c4a",       // atlas done
           light: "#22C55E",
-          muted: "rgba(21, 128, 61, 0.10)",
+          muted: "rgba(15, 140, 74, 0.10)",
         },
         warning: {
-          DEFAULT: "#B45309",
+          DEFAULT: "#b45309",       // atlas warn
           muted: "rgba(180, 83, 9, 0.10)",
         },
         danger: {
           DEFAULT: "#B91C1C",
           muted: "rgba(185, 28, 28, 0.10)",
+        },
+        // ── Atlas direction palette (cool blue-gray + cyan AI accent) ────
+        // Used by the dashboard. Mapped 1:1 from design/atlas.jsx so visual
+        // tweaks should round-trip cleanly with the design source.
+        atlas: {
+          bg: "#fafbfc",
+          panel: "#ffffff",
+          "panel-2": "#f3f5f8",
+          border: "#e3e7ec",
+          "border-hi": "#c7cfd9",
+          fg: "#0f1722",
+          dim: "#5b6878",
+          dimmer: "#9aa5b3",
+          ai: "#0891b2",            // cyan-700 — design's quiet AI accent
+          "ai-deep": "#0e7490",     // cyan-800 for hover/dim states
+          "ai-soft": "#cffafe",
+          warn: "#b45309",
+          done: "#0f8c4a",
         },
       },
       fontFamily: {

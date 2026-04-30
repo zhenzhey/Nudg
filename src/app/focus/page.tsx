@@ -51,11 +51,11 @@ function FocusTimer() {
 
   const R = 130;
   const C = 2 * Math.PI * R;
-  const ringColor = phase === "work" ? "#5E6AD2" : "#22C55E";
+  const ringColor = phase === "work" ? "#0891b2" : "#22C55E";
 
   return (
     <main
-      style={{ backgroundColor: "#0F172A", minHeight: "100dvh", position: "relative" }}
+      style={{ backgroundColor: "#0f1722", minHeight: "100dvh", position: "relative" }}
       className="flex flex-col items-center justify-center overflow-hidden select-none"
     >
       {/* Ambient glow */}

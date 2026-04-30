@@ -12,6 +12,50 @@ export const metadata: Metadata = {
   title: "Projects",
 };
 
+function StatCard({
+  icon,
+  value,
+  label,
+  tone,
+}: {
+  icon: React.ReactNode;
+  value: number;
+  label: string;
+  tone: "success" | "warning" | "primary" | "error" | "muted";
+}) {
+  const valueColor =
+    tone === "success"
+      ? "text-success"
+      : tone === "warning"
+      ? "text-warning"
+      : tone === "primary"
+      ? "text-primary"
+      : tone === "error"
+      ? "text-error"
+      : "text-on-surface";
+  const iconBg =
+    tone === "success"
+      ? "bg-success-muted"
+      : tone === "warning"
+      ? "bg-warning-muted"
+      : tone === "primary"
+      ? "bg-primary/10"
+      : tone === "error"
+      ? "bg-error-container/40"
+      : "bg-surface-container";
+  return (
+    <div className="flex-1 min-w-0 flex items-center gap-2.5 bg-surface-container-lowest rounded-xl px-3 py-2.5 ring-1 ring-outline-variant/10">
+      <div className={cn("w-8 h-8 rounded-lg flex items-center justify-center shrink-0", iconBg)}>
+        {icon}
+      </div>
+      <div className="flex flex-col leading-tight min-w-0">
+        <span className={cn("text-lg font-black tabular-nums leading-none", valueColor)}>{value}</span>
+        <span className="text-[11px] text-on-surface-variant font-medium mt-0.5 truncate">{label}</span>
+      </div>
+    </div>
+  );
+}
+
 export default async function ProjectsPage() {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -44,80 +88,79 @@ export default async function ProjectsPage() {
 
   return (
     <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-8 animate-slide-up">
-      <div className="flex items-center justify-between mb-2">
+      <div className="flex items-center justify-between mb-1">
         <h1 className="text-2xl font-black tracking-tight text-on-surface">Projects</h1>
         <Link href="/projects/new">
-          <button className="flex items-center gap-1.5 bg-neutral text-on-neutral text-sm font-semibold px-4 py-2 rounded-xl hover:bg-neutral/90 transition-colors shadow-sm">
+          <button className="flex items-center gap-1.5 bg-neutral text-on-neutral text-sm font-semibold px-4 py-2 rounded-xl hover:bg-neutral/90 transition-colors shadow-sm cursor-pointer">
             <Plus size={14} />
-            New Project
+            New
           </button>
         </Link>
       </div>
-      <p className="text-on-surface-variant mb-8">
-        Every deliverable you ship is proof of work. This is your track record.
+      <p className="text-on-surface-variant text-sm mb-6">
+        Every deliverable you ship is proof of work.
       </p>
 
-      {/* Stats */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-8">
-        <div className="bg-surface-container-lowest rounded-xl p-4 ring-1 ring-outline-variant/10 text-center shadow-kinetic-sm">
-          <div className="text-2xl font-black text-success">{submitted.length}</div>
-          <div className="text-xs text-on-surface-variant mt-1 flex items-center justify-center gap-1">
-            <CheckCircle2 size={11} />
-            Shipped
-          </div>
-        </div>
-        <div className="bg-surface-container-lowest rounded-xl p-4 ring-1 ring-outline-variant/10 text-center shadow-kinetic-sm">
-          <div className={cn("text-2xl font-black", streak > 0 ? "text-warning" : "text-on-surface")}>
-            {streak}
-          </div>
-          <div className="text-xs text-on-surface-variant mt-1 flex items-center justify-center gap-1">
-            <Flame size={11} />
-            Week streak
-          </div>
-        </div>
-        <div className="bg-surface-container-lowest rounded-xl p-4 ring-1 ring-outline-variant/10 text-center shadow-kinetic-sm">
-          <div className="text-2xl font-black text-primary">{completedQuests.length}</div>
-          <div className="text-xs text-on-surface-variant mt-1 flex items-center justify-center gap-1">
-            <Zap size={11} />
-            Projects done
-          </div>
-        </div>
-        <div className="bg-surface-container-lowest rounded-xl p-4 ring-1 ring-outline-variant/10 text-center shadow-kinetic-sm">
-          <div className={cn("text-2xl font-black", missed.length > 0 ? "text-error" : "text-on-surface")}>
-            {missed.length}
-          </div>
-          <div className="text-xs text-on-surface-variant mt-1">Missed</div>
-        </div>
+      {/* Stats strip — single row */}
+      <div className="flex items-stretch gap-2 mb-8">
+        <StatCard icon={<CheckCircle2 size={15} className="text-success" />} value={submitted.length} label="shipped" tone="success" />
+        <StatCard icon={<Flame size={15} className={streak > 0 ? "text-warning" : "text-on-surface-variant"} />} value={streak} label="streak" tone={streak > 0 ? "warning" : "muted"} />
+        <StatCard icon={<Zap size={15} className="text-primary" />} value={completedQuests.length} label="done" tone="primary" />
+        {missed.length > 0 && (
+          <StatCard icon={<span className="block w-2 h-2 rounded-full bg-error" />} value={missed.length} label="missed" tone="error" />
+        )}
       </div>
 
-      {/* Quest progress */}
+      {/* Project cards */}
       {allQuests.length > 0 ? (
-        <section className="mb-8">
+        <section className="mb-10">
           <h2 className="text-xs font-bold text-on-surface-variant uppercase tracking-widest mb-3">
             All Projects
           </h2>
           <div className="space-y-3">
             {allQuests.map((quest) => {
               const progress = getGoalProgress(quest);
-              const questSubmitted = (quest.deliverables ?? []).filter(
+              const deliverables = (quest.deliverables ?? []).slice().sort(
+                (a: Deliverable, b: Deliverable) =>
+                  (a.order_index ?? a.week_number ?? 0) - (b.order_index ?? b.week_number ?? 0)
+              );
+              const questSubmitted = deliverables.filter(
                 (d: Deliverable) => d.status === "submitted" || d.status === "verified"
               ).length;
+              const questMissed = deliverables.filter(
+                (d: Deliverable) => d.status === "missed"
+              ).length;
+              const total = deliverables.length || quest.duration_weeks;
+              const accentColor =
+                quest.status === "completed"
+                  ? "before:bg-success"
+                  : quest.status === "active"
+                  ? "before:bg-gradient-to-b before:from-primary before:to-accent"
+                  : "before:bg-on-surface-variant/30";
 
               return (
-                <Link key={quest.id} href={`/projects/${quest.id}`}>
-                  <div className="bg-surface-container-lowest rounded-xl p-5 ring-1 ring-outline-variant/10 hover:ring-outline-variant/30 hover:shadow-kinetic transition-all">
-                    <div className="flex items-start justify-between gap-3 mb-3">
-                      <div>
-                        <h3 className="font-semibold text-on-surface">{quest.title}</h3>
-                        <p className="text-xs text-on-surface-variant mt-0.5">
+                <Link key={quest.id} href={`/projects/${quest.id}`} className="block">
+                  <div
+                    className={cn(
+                      "group relative bg-surface-container-lowest rounded-2xl p-5 ring-1 ring-outline-variant/10 hover:ring-primary/30 hover:shadow-card transition-all",
+                      "before:absolute before:left-0 before:top-5 before:bottom-5 before:w-1 before:rounded-r-full",
+                      accentColor
+                    )}
+                  >
+                    <div className="flex items-start justify-between gap-3 mb-4">
+                      <div className="min-w-0 flex-1">
+                        <h3 className="text-base font-bold text-on-surface truncate group-hover:text-primary transition-colors">
+                          {quest.title}
+                        </h3>
+                        <p className="text-xs text-on-surface-variant mt-1">
                           Started {formatDate(quest.start_date)}
                         </p>
                       </div>
                       <span
                         className={cn(
-                          "text-xs px-2.5 py-1 rounded-full font-semibold",
+                          "text-[10px] px-2.5 py-1 rounded-full font-bold uppercase tracking-wider shrink-0",
                           quest.status === "active"
-                            ? "bg-primary-container/40 text-primary"
+                            ? "bg-primary/10 text-primary"
                             : quest.status === "completed"
                             ? "bg-success-muted text-success"
                             : "bg-surface-container text-on-surface-variant"
@@ -126,36 +169,39 @@ export default async function ProjectsPage() {
                         {quest.status}
                       </span>
                     </div>
-                    <div className="mb-2">
-                      <div className="flex justify-between text-xs text-on-surface-variant mb-1">
-                        <span>{questSubmitted}/{quest.duration_weeks} weeks shipped</span>
-                        <span>{progress}%</span>
-                      </div>
-                      <div className="progress-bar">
-                        <div
-                          className={cn(
-                            "progress-fill",
-                            progress === 100 ? "bg-success" : "bg-gradient-to-r from-primary to-accent"
-                          )}
-                          style={{ width: `${progress}%` }}
-                        />
-                      </div>
+
+                    {/* Progress segments — fill left-to-right */}
+                    <div className="flex items-center gap-1.5 mb-3">
+                      {Array.from({ length: total }).map((_, idx) => {
+                        const isFilled = idx < questSubmitted;
+                        const isMissed = !isFilled && idx < questSubmitted + questMissed;
+                        return (
+                          <div
+                            key={idx}
+                            className={cn(
+                              "h-2 flex-1 rounded-full transition-colors",
+                              isFilled
+                                ? "bg-gradient-to-r from-primary to-accent"
+                                : isMissed
+                                ? "bg-error/40"
+                                : "bg-surface-container ring-1 ring-outline-variant/15"
+                            )}
+                          />
+                        );
+                      })}
                     </div>
-                    <div className="flex gap-1.5 flex-wrap mt-3">
-                      {(quest.deliverables ?? []).map((d: Deliverable) => (
-                        <div
-                          key={d.id}
-                          title={`Week ${d.week_number}: ${d.title}`}
-                          className={cn(
-                            "w-5 h-5 rounded-md",
-                            d.status === "submitted" || d.status === "verified"
-                              ? "bg-success"
-                              : d.status === "missed"
-                              ? "bg-error/40"
-                              : "bg-surface-container ring-1 ring-outline-variant/20"
-                          )}
-                        />
-                      ))}
+
+                    <div className="flex items-center justify-between text-xs">
+                      <div className="flex items-center gap-3 text-on-surface-variant">
+                        <span className="font-mono font-semibold text-on-surface">
+                          {questSubmitted}<span className="text-on-surface-variant/60">/{total}</span>
+                        </span>
+                        <span>·</span>
+                        <span>{progress}% complete</span>
+                      </div>
+                      <span className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 text-primary font-semibold">
+                        Open <ExternalLink size={11} />
+                      </span>
                     </div>
                   </div>
                 </Link>

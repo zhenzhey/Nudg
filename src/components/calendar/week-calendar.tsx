@@ -100,7 +100,7 @@ function TaskBlock({
   const dur = task.estimated_hours ?? 1;
   const height = Math.max(dur * HOUR_HEIGHT - 3, 22);
   const isStandalone = !task.deliverable_id;
-  const color = isStandalone ? "#6C7791" : "#5E6AD2";
+  const color = isStandalone ? "#5b6878" : "#0891b2";
 
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (e.button !== 0) return;
@@ -227,10 +227,10 @@ function NowLineOverlay() {
       {/* dot */}
       <div
         className="absolute rounded-full"
-        style={{ top: -4, left: -5, width: 10, height: 10, backgroundColor: "#5E6AD2" }}
+        style={{ top: -4, left: -5, width: 10, height: 10, backgroundColor: "#0891b2" }}
       />
       {/* line */}
-      <div style={{ height: 2, backgroundColor: "#5E6AD2" }} />
+      <div style={{ height: 2, backgroundColor: "#0891b2" }} />
     </div>
   );
 }

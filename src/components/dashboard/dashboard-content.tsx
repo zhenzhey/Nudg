@@ -1,15 +1,18 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { getCurrentWeek, getGoalProgress } from "@/lib/utils";
-import { DeliverableCard } from "@/components/dashboard/deliverable-card";
-import { FocusTaskCard } from "@/components/dashboard/focus-task-card";
-import { ScheduleView } from "@/components/dashboard/schedule-view";
-import { ConflictWarningCard } from "@/components/dashboard/conflict-warning-card";
+import { Plus, Zap } from "lucide-react";
 import type { Project, Deliverable, Task } from "@/types";
-import { Zap, Search, Mic, Sparkles, Plus } from "lucide-react";
-import { InboxInput } from "@/components/dashboard/inbox-input";
+
+import { ProjectSidebar } from "./project-sidebar";
+import { StatusBar } from "./status-bar";
+import { FocusTaskCard } from "./focus-task-card";
+import { ConflictWarningCard } from "./conflict-warning-card";
+import { ExecutionPlan } from "./execution-plan";
+import { MiniMap } from "./mini-map";
+import { DayCalendar } from "./day-calendar";
+import { useActiveProject } from "@/components/layout/active-project-context";
 
 interface DashboardContentProps {
   projects: Project[];
@@ -17,37 +20,44 @@ interface DashboardContentProps {
   tomorrow: string;
 }
 
-export function DashboardContent({ projects: initialProjects, today, tomorrow }: DashboardContentProps) {
+export function DashboardContent({
+  projects: initialProjects,
+  today,
+  tomorrow,
+}: DashboardContentProps) {
   const [projects, setProjects] = useState(initialProjects);
   const [selectedId, setSelectedId] = useState(initialProjects[0]?.id ?? "");
-  const [aiQuery, setAiQuery] = useState("");
+  const { setActive } = useActiveProject();
 
-  // Sync with refreshed server data after router.refresh().
   useEffect(() => {
     setProjects(initialProjects);
   }, [initialProjects]);
 
   const selected = projects.find((p) => p.id === selectedId) ?? projects[0];
-  const currentWeek = selected ? getCurrentWeek(selected.start_date) : 1;
-  const progress = selected ? getGoalProgress(selected) : 0;
 
-  const currentDeliverable = useMemo(() => {
-    if (!selected) return null;
-    const sorted = [...(selected.deliverables ?? [])].sort(
+  // Publish the active project for the breadcrumb in the navbar; clear on unmount
+  // so the navbar doesn't show a stale project name on other pages.
+  useEffect(() => {
+    if (selected) setActive({ id: selected.id, title: selected.title });
+    return () => setActive(null);
+  }, [selected, setActive]);
+
+  const sortedDeliverables = useMemo(() => {
+    if (!selected) return [];
+    return [...(selected.deliverables ?? [])].sort(
       (a: Deliverable, b: Deliverable) =>
         (a.order_index ?? a.week_number ?? 0) - (b.order_index ?? b.week_number ?? 0)
     );
-    return (
-      sorted.find(
-        (d: Deliverable) => d.status !== "submitted" && d.status !== "verified"
-      ) ?? null
-    );
   }, [selected]);
 
-  // Pick the "focus" task: nearest scheduled pending task in the selected
-  // project (any date, ordered by scheduled_date then scheduled_time). Fall
-  // back to the first pending task in the current deliverable. The task's own
-  // deliverable wins for the small header — even if it isn't currentDeliverable.
+  const currentDeliverable = useMemo(
+    () =>
+      sortedDeliverables.find(
+        (d) => d.status !== "submitted" && d.status !== "verified"
+      ) ?? null,
+    [sortedDeliverables]
+  );
+
   const focus = useMemo(() => {
     if (!selected) return null;
     const all = (selected.deliverables ?? []).flatMap((d: Deliverable) =>
@@ -66,11 +76,22 @@ export function DashboardContent({ projects: initialProjects, today, tomorrow }:
     if (scheduled.length > 0) return scheduled[0];
 
     if (currentDeliverable) {
-      const fallback = (currentDeliverable.tasks ?? []).find((t) => t.status !== "completed");
-      if (fallback) return { task: fallback, deliverable: currentDeliverable };
+      const fallback = (currentDeliverable.tasks ?? []).find(
+        (t) => t.status !== "completed"
+      );
+      if (fallback)
+        return { task: fallback, deliverable: currentDeliverable };
     }
     return null;
   }, [selected, currentDeliverable]);
+
+  const focusPosition = useMemo(() => {
+    if (!focus) return null;
+    const tasks = focus.deliverable.tasks ?? [];
+    const idx = tasks.findIndex((t) => t.id === focus.task.id);
+    if (idx < 0) return null;
+    return { index: idx + 1, total: tasks.length };
+  }, [focus]);
 
   const handleTaskUpdate = (taskId: string, patch: Partial<Task>) => {
     setProjects((prev) =>
@@ -86,191 +107,123 @@ export function DashboardContent({ projects: initialProjects, today, tomorrow }:
     );
   };
 
-  const allScheduledTasks = useMemo(() =>
-    projects.flatMap((p) =>
-      (p.deliverables ?? []).flatMap((d: Deliverable) =>
-        (d.tasks ?? []).map((t: Task) => ({
-          ...t,
-          deliverable_title: d.title,
-          project_title: p.title,
-        }))
-      )
-    ), [projects]);
+  const allTasks = useMemo(() => {
+    if (!selected) return [];
+    return (selected.deliverables ?? []).flatMap((d: Deliverable) =>
+      (d.tasks ?? []).map((t) => ({
+        ...t,
+        deliverable_title: d.title,
+        project_title: selected.title,
+      }))
+    );
+  }, [selected]);
 
-  const todayTasks = allScheduledTasks.filter((t) => t.scheduled_date === today && t.scheduled_time != null);
-  const tomorrowTasks = allScheduledTasks.filter((t) => t.scheduled_date === tomorrow && t.scheduled_time != null);
+  const todayTasks = useMemo(
+    () => allTasks.filter((t) => t.scheduled_date === today),
+    [allTasks, today]
+  );
 
   if (projects.length === 0) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-[60vh] text-center">
-        <div className="w-14 h-14 bg-surface rounded-2xl flex items-center justify-center mb-4 shadow-card">
-          <Zap size={24} className="text-primary" />
-        </div>
-        <h3 className="text-xl font-black text-on-surface mb-2">No active projects</h3>
-        <p className="text-sm text-on-surface-variant mb-6 max-w-xs">
-          Start a project, let AI build your weekly roadmap, and start shipping.
-        </p>
-        <Link href="/projects/new">
-          <button className="inline-flex items-center gap-1.5 bg-neutral text-on-neutral text-sm font-semibold px-5 py-2.5 rounded-xl hover:opacity-90 transition-opacity">
-            <Plus size={15} />
-            Start your first project
-          </button>
-        </Link>
-      </div>
-    );
+    return <EmptyState />;
   }
 
-  const phaseName = currentDeliverable?.title ?? `Week ${currentWeek}`;
-
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-5 animate-slide-up">
-      {/* ── Header ──────────────────────────────────────────── */}
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <p className="text-[11px] font-bold uppercase tracking-widest text-on-surface-variant mb-1">
-            Project Execution
-          </p>
-          <h1 className="text-3xl font-black tracking-tight text-on-surface leading-none">
-            {selected?.title ?? "Dashboard"}
-          </h1>
-        </div>
-      </div>
+    // Override the parent layout's lavender bg with atlas warm-white. The
+    // negative margin compensates for any horizontal padding the parent main
+    // wrapper might add — the dashboard fills edge-to-edge.
+    <div
+      className="bg-atlas-bg text-atlas-fg grid min-h-[calc(100vh-44px)]"
+      style={{ gridTemplateColumns: "220px minmax(0, 1fr) 320px" }}
+    >
+      <ProjectSidebar
+        projects={projects}
+        selectedId={selectedId}
+        onSelect={setSelectedId}
+      />
 
-      {/* ── Project switcher ────────────────────────────────── */}
-      {projects.length > 1 && (
-        <div className="flex items-center gap-2 flex-wrap">
-          {projects.map((p) => {
-            const prog = getGoalProgress(p);
-            const isActive = p.id === selectedId;
-            return (
-              <button
-                key={p.id}
-                onClick={() => setSelectedId(p.id)}
-                className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-sm font-semibold transition-all border ${
-                  isActive
-                    ? "bg-surface border-primary/30 text-on-surface shadow-card"
-                    : "bg-surface/60 border-outline/20 text-on-surface-variant hover:bg-surface hover:text-on-surface"
-                }`}
-              >
-                <span className={`w-1.5 h-1.5 rounded-full ${isActive ? "bg-primary" : "bg-on-surface-variant/40"}`} />
-                {p.title}
-                <span className={`text-xs font-bold ${isActive ? "text-primary" : "text-on-surface-variant"}`}>
-                  {prog}%
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      )}
+      {/* Main column — atlas-bg shows through */}
+      <div className="min-w-0 overflow-y-auto bg-atlas-bg">
+        {selected && <StatusBar project={selected} deliverable={currentDeliverable} />}
 
-      {/* ── Google Calendar conflict warnings ───────────────── */}
-      <ConflictWarningCard />
-
-      {/* ── Progress bar ────────────────────────────────────── */}
-      <div className="bg-surface rounded-2xl border border-outline/20 shadow-card px-5 py-4">
-        <div className="flex items-center justify-between mb-3">
-          <span className="text-sm font-semibold text-primary">
-            Phase {currentWeek}: {phaseName}
-          </span>
-          <span className="text-sm font-bold text-on-surface">{progress}% Complete</span>
-        </div>
-        <div className="h-2 bg-surface-container rounded-full overflow-hidden">
-          <div
-            className="h-full bg-primary rounded-full transition-all duration-700"
-            style={{ width: `${progress}%` }}
-          />
-        </div>
-      </div>
-
-      {/* ── Main 2-column grid ──────────────────────────────── */}
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] xl:grid-cols-[1fr_360px] gap-5 items-start">
-
-        {/* Left: deliverable + ask AI */}
-        <div className="space-y-4">
-          {focus && selected && (
+        {focus && selected && (
+          <div className="px-6 pt-[18px]">
             <FocusTaskCard
               key={focus.task.id}
               task={focus.task}
               deliverable={focus.deliverable}
               project={selected}
+              taskIndex={focusPosition?.index}
+              taskTotal={focusPosition?.total}
               onTaskUpdate={handleTaskUpdate}
             />
-          )}
-          {currentDeliverable && selected ? (
-            <DeliverableCard
-              key={currentDeliverable.id}
-              deliverable={currentDeliverable as Deliverable & { tasks: Task[] }}
-              today={today}
-              tomorrow={tomorrow}
-              onTaskUpdate={handleTaskUpdate}
-            />
-          ) : (
-            <div className="bg-surface rounded-2xl border border-outline/20 shadow-card p-8 text-center">
-              <div className="w-10 h-10 bg-success-muted rounded-xl flex items-center justify-center mx-auto mb-3">
-                <Zap size={20} className="text-success" />
-              </div>
-              <h3 className="text-base font-bold text-on-surface mb-1">All caught up!</h3>
-              <p className="text-sm text-on-surface-variant mb-4">No pending deliverables this week.</p>
-              <Link href={`/projects/${selected?.id}`}>
-                <button className="text-sm text-primary font-semibold hover:underline">View project →</button>
-              </Link>
-            </div>
-          )}
-
-          {/* Ask AI */}
-          <div className="bg-surface rounded-2xl border border-outline/20 shadow-card p-4">
-            <div className="flex items-center gap-2 mb-3">
-              <div className="w-5 h-5 bg-primary/10 rounded-md flex items-center justify-center">
-                <Sparkles size={11} className="text-primary" />
-              </div>
-              <span className="text-sm font-bold text-on-surface">
-                {selected?.title ? `${selected.title} AI` : "Project AI"}
-              </span>
-            </div>
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                if (aiQuery.trim() && selected)
-                  window.location.href = `/projects/${selected.id}?ai=${encodeURIComponent(aiQuery)}`;
-              }}
-            >
-              <div className="relative">
-                <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant pointer-events-none" />
-                <input
-                  type="text"
-                  value={aiQuery}
-                  onChange={(e) => setAiQuery(e.target.value)}
-                  placeholder="Ask AI to analyze deliverables, search docs, or suggest next steps..."
-                  className="w-full bg-surface-container text-sm text-on-surface placeholder:text-inverse-on-surface rounded-xl pl-8 pr-9 py-2.5 border border-outline/20 focus:outline-none focus:border-primary/40 focus:ring-1 focus:ring-primary/20 transition-all"
-                />
-                <button
-                  type="button"
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-primary transition-colors"
-                >
-                  <Mic size={13} />
-                </button>
-              </div>
-            </form>
           </div>
-        </div>
+        )}
 
-        {/* Right: inbox + schedule */}
-        <div className="space-y-4">
-          <InboxInput
-            projectId={selected?.id}
-            deliverableId={currentDeliverable?.id}
-            projectTitle={selected?.title}
-            deliverableTitle={currentDeliverable?.title}
-          />
-          <ScheduleView
-            todayTasks={todayTasks}
-            tomorrowTasks={tomorrowTasks}
+        {!focus && currentDeliverable && (
+          <div className="mx-6 mt-[18px] rounded-[10px] bg-atlas-ai-soft/60 border border-atlas-ai/30 p-6 text-center">
+            <Zap size={20} className="text-atlas-done mx-auto mb-2" />
+            <p className="text-sm font-semibold text-atlas-fg">All tasks for this deliverable are done.</p>
+            <Link href={`/projects/${selected?.id}`}>
+              <button className="text-xs text-atlas-ai mt-2 hover:underline">View deliverable →</button>
+            </Link>
+          </div>
+        )}
+
+        <ConflictWarningCard />
+
+        {selected && (
+          <ExecutionPlan
+            tasks={allTasks}
             today={today}
-            tomorrow={tomorrow}
             onTaskUpdate={handleTaskUpdate}
           />
-        </div>
+        )}
       </div>
+
+      {/* Right rail — atlas panel. The calendar gets a bounded height so it
+          shows a window of the 24h timeline with internal scrolling, instead
+          of stretching to fill the rail. */}
+      <aside className="border-l border-atlas-border bg-atlas-panel flex flex-col">
+        {selected && (
+          <>
+            <div className="border-b border-atlas-border">
+              <MiniMap
+                project={selected}
+                deliverables={sortedDeliverables}
+                currentDeliverableId={currentDeliverable?.id ?? null}
+              />
+            </div>
+            <div className="h-[420px] shrink-0">
+              <DayCalendar
+                todayTasks={todayTasks}
+                today={today}
+                focusTaskId={focus?.task.id}
+                onTaskUpdate={handleTaskUpdate}
+              />
+            </div>
+          </>
+        )}
+      </aside>
+    </div>
+  );
+}
+
+function EmptyState() {
+  return (
+    <div className="flex flex-col items-center justify-center min-h-[60vh] text-center bg-atlas-bg">
+      <div className="w-14 h-14 bg-atlas-panel rounded-2xl flex items-center justify-center mb-4 border border-atlas-border">
+        <Zap size={24} className="text-atlas-ai" />
+      </div>
+      <h3 className="text-xl font-bold text-atlas-fg mb-2 tracking-tight">No active projects</h3>
+      <p className="text-sm text-atlas-dim mb-6 max-w-xs">
+        Start a project, let AI build your weekly roadmap, and start shipping.
+      </p>
+      <Link href="/projects/new">
+        <button className="inline-flex items-center gap-1.5 bg-atlas-fg text-atlas-bg text-sm font-semibold px-5 py-2.5 rounded-lg hover:opacity-90 transition-opacity">
+          <Plus size={15} />
+          Start your first project
+        </button>
+      </Link>
     </div>
   );
 }
