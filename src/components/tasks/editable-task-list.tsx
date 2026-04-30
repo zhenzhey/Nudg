@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import type { Task } from "@/types";
 import { Check, Clock, Plus, Pencil, Trash2, X, Loader2, Sparkles } from "lucide-react";
+import { useAIMode } from "@/components/layout/ai-mode-context";
 
 interface EditableTaskListProps {
   tasks: Task[];
@@ -18,6 +19,7 @@ export function EditableTaskList({
   autoGenerate = false,
 }: EditableTaskListProps) {
   const router = useRouter();
+  const { aiOn } = useAIMode();
   const [tasks, setTasks] = useState<Task[]>(initialTasks);
   const [busy, setBusy] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -51,6 +53,7 @@ export function EditableTaskList({
 
   useEffect(() => {
     if (
+      aiOn &&
       autoGenerate &&
       tasks.length === 0 &&
       !triedAuto.current &&
@@ -61,7 +64,7 @@ export function EditableTaskList({
       generate();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoGenerate, tasks.length]);
+  }, [aiOn, autoGenerate, tasks.length]);
 
   async function toggleTask(taskId: string, currentStatus: string) {
     setBusy(taskId);
@@ -174,14 +177,16 @@ export function EditableTaskList({
                 : "No micro-tasks yet."}
             </p>
             <div className="flex items-center justify-center gap-2">
-              <button
-                onClick={generate}
-                disabled={generating}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary-container/40 text-primary text-xs font-semibold hover:bg-primary-container/60 transition disabled:opacity-50"
-              >
-                <Sparkles size={12} />
-                {genError ? "Try again" : "Generate with AI"}
-              </button>
+              {aiOn && (
+                <button
+                  onClick={generate}
+                  disabled={generating}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary-container/40 text-primary text-xs font-semibold hover:bg-primary-container/60 transition disabled:opacity-50"
+                >
+                  <Sparkles size={12} />
+                  {genError ? "Try again" : "Generate with AI"}
+                </button>
+              )}
               <button
                 onClick={() => setAdding(true)}
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface-container text-on-surface text-xs font-semibold hover:bg-surface-container-high transition"

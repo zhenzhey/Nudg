@@ -79,7 +79,18 @@ export function FocusTaskCard({
   }, [task.id, meta.start_step, meta.ai_assist, onTaskUpdate]);
 
   const blockLabel = formatBlock(task);
-  const focusHref = `/focus?taskId=${task.id}&title=${encodeURIComponent(task.title)}&deliverableId=${deliverable.id}&projectId=${project.id}`;
+  // Pre-load context the focus page renders (deliverable title, start step) via
+  // URL params so the timer view can paint immediately. The page still falls
+  // back to /api/tasks/[id]/enrich if start_step is absent (e.g. shared link).
+  const focusParams = new URLSearchParams({
+    taskId: task.id,
+    title: task.title,
+    deliverableId: deliverable.id,
+    deliverableTitle: deliverable.title,
+    projectId: project.id,
+  });
+  if (meta.start_step) focusParams.set("startStep", meta.start_step);
+  const focusHref = `/focus?${focusParams.toString()}`;
   const positionLabel =
     taskIndex && taskTotal ? `Task ${taskIndex} of ${taskTotal} in this deliverable` : null;
 

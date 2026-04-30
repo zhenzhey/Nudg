@@ -150,8 +150,8 @@ function TaskBlock({
         height,
         left: 4,
         right: 4,
-        backgroundColor: isStandalone ? "rgba(108,119,145,0.16)" : "rgba(94,106,210,0.18)",
-        border: `1px solid ${isStandalone ? "rgba(108,119,145,0.30)" : "rgba(94,106,210,0.30)"}`,
+        backgroundColor: isStandalone ? "rgba(108,119,145,0.16)" : "rgba(8,145,178,0.12)",
+        border: `1px solid ${isStandalone ? "rgba(108,119,145,0.30)" : "rgba(8,145,178,0.30)"}`,
         borderLeftWidth: 3,
         borderLeftColor: color,
         transform: dragOffset ? `translate(${dragOffset.x}px, ${dragOffset.y}px)` : undefined,
@@ -333,7 +333,7 @@ function TaskPopover({
         top: y,
         width: popW,
         backgroundColor: "#ffffff",
-        border: "1.5px solid rgba(94,106,210,0.55)",
+        border: "1.5px solid rgba(8,145,178,0.45)",
         boxShadow: "0 4px 16px rgba(15,23,42,0.12), 0 16px 48px rgba(15,23,42,0.22)",
       }}
     >
@@ -490,7 +490,7 @@ function NewTaskDialog({
           width: popW,
           backgroundColor: "#ffffff",
           zIndex: 9999,
-          border: "1.5px solid rgba(94,106,210,0.55)",
+          border: "1.5px solid rgba(8,145,178,0.45)",
           boxShadow: "0 4px 16px rgba(15,23,42,0.12), 0 16px 48px rgba(15,23,42,0.22)",
         }}
       >
@@ -600,7 +600,7 @@ function PlanWeekButton({
         <div
           className="absolute right-0 top-full mt-2 rounded-xl p-2 z-[200] w-56 bg-white"
           style={{
-            border: "1.5px solid rgba(94,106,210,0.55)",
+            border: "1.5px solid rgba(8,145,178,0.45)",
             boxShadow: "0 4px 16px rgba(15,23,42,0.12), 0 16px 48px rgba(15,23,42,0.22)",
           }}
         >

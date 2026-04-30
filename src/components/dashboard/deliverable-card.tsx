@@ -1,10 +1,10 @@
 "use client";
 
 import { useState, useRef, useCallback } from "react";
+import { useAIMode } from "@/components/layout/ai-mode-context";
 import {
   CheckSquare,
   Square,
-  Sparkles,
   Trash2,
   Loader2,
   Plus,
@@ -327,7 +327,7 @@ export function DeliverableCard({
 }: DeliverableCardProps) {
   const [tasks, setTasks] = useState<Task[]>(deliverable.tasks ?? []);
   const [estimatingIds, setEstimatingIds] = useState<Set<string>>(new Set());
-  const [isSuggesting, setIsSuggesting] = useState(false);
+  const { aiOn } = useAIMode();
 
   const updateTask = (id: string, patch: Partial<Task>) => {
     setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)));
@@ -339,6 +339,21 @@ export function DeliverableCard({
   };
 
   const estimateTask = useCallback(async (taskId: string, rawInput?: string) => {
+    if (!aiOn) {
+      // AI off: persist the typed title verbatim, no summarization or estimate.
+      if (rawInput) {
+        const res = await fetch(`/api/tasks/${taskId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title: rawInput }),
+        });
+        if (res.ok) {
+          const { task: updated } = await res.json();
+          setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, ...updated } : t)));
+        }
+      }
+      return;
+    }
     setEstimatingIds((prev) => new Set([...prev, taskId]));
     try {
       const res = await fetch(`/api/tasks/${taskId}/estimate`, {
@@ -357,29 +372,11 @@ export function DeliverableCard({
         return next;
       });
     }
-  }, []);
+  }, [aiOn]);
 
   const handleAddTask = (task: Task) => {
     setTasks((prev) => [...prev, task]);
-    estimateTask(task.id, task.title);
-  };
-
-  const handleSuggest = async (count: 1 | 3) => {
-    if (isSuggesting) return;
-    setIsSuggesting(true);
-    try {
-      const res = await fetch(`/api/deliverables/${deliverable.id}/next-steps`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ count }),
-      });
-      if (res.ok) {
-        const { tasks: newTasks } = await res.json();
-        setTasks((prev) => [...prev, ...newTasks]);
-      }
-    } finally {
-      setIsSuggesting(false);
-    }
+    if (aiOn) estimateTask(task.id, task.title);
   };
 
   return (
@@ -391,27 +388,6 @@ export function DeliverableCard({
           <p className="text-[11px] font-bold uppercase tracking-widest text-primary">
             Execution Plan
           </p>
-          <div className="flex items-center gap-0.5">
-            {isSuggesting ? (
-              <Loader2 size={12} className="animate-spin text-on-surface-variant/40 mr-1" />
-            ) : (
-              <Sparkles size={12} className="text-on-surface-variant/30 mr-1" />
-            )}
-            <button
-              onClick={() => handleSuggest(1)}
-              disabled={isSuggesting}
-              className="text-[11px] px-2 py-0.5 rounded-md text-on-surface-variant/45 hover:text-primary hover:bg-primary/8 disabled:opacity-40 transition-all"
-            >
-              Next step
-            </button>
-            <button
-              onClick={() => handleSuggest(3)}
-              disabled={isSuggesting}
-              className="text-[11px] px-2 py-0.5 rounded-md text-on-surface-variant/45 hover:text-primary hover:bg-primary/8 disabled:opacity-40 transition-all"
-            >
-              Next 3 steps
-            </button>
-          </div>
         </div>
 
         <div className="space-y-2">

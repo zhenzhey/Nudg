@@ -2,32 +2,81 @@
 
 import { useState, useEffect, useCallback, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-import { Play, Pause, RotateCcw, SkipForward, ArrowLeft } from "lucide-react";
+import { ArrowLeft, RotateCcw, Pause, Play, Check } from "lucide-react";
 
 const WORK_S = 25 * 60;
 const BREAK_S = 5 * 60;
 type Phase = "work" | "break";
 
+// Atlas dark palette — mirrored 1:1 from design/atlas.jsx AS_DARK.
+const T = {
+  bg: "#0c1117",
+  panel: "#11161e",
+  border: "#212a36",
+  fg: "#e8edf3",
+  dim: "#8a96a6",
+  ai: "#22d3ee",
+  font: "'Geist', system-ui, sans-serif",
+  mono: "'Geist Mono', ui-monospace, monospace",
+};
+
+function todayKey() {
+  return `nudg-pomodoros-${new Date().toISOString().slice(0, 10)}`;
+}
+
 function FocusTimer() {
   const params = useSearchParams();
   const router = useRouter();
-  const title = params.get("title") ?? "Focus Session";
+  const title = params.get("title") ?? "Focus session";
+  const taskId = params.get("taskId");
+  const deliverableTitle = params.get("deliverableTitle") ?? "";
+  const initialStartStep = params.get("startStep") ?? "";
 
   const [phase, setPhase] = useState<Phase>("work");
   const [seconds, setSeconds] = useState(WORK_S);
   const [running, setRunning] = useState(false);
-  const [sessions, setSessions] = useState(0);
+  const [todayDone, setTodayDone] = useState(0);
+  const [startStep, setStartStep] = useState(initialStartStep);
+
+  useEffect(() => {
+    const v = window.localStorage.getItem(todayKey());
+    setTodayDone(v ? Number.parseInt(v, 10) || 0 : 0);
+  }, []);
+
+  // Fallback: if URL didn't carry startStep (direct link or pre-enrichment
+  // click), ask the server to enrich. Endpoint is idempotent.
+  useEffect(() => {
+    if (startStep || !taskId) return;
+    let cancelled = false;
+    fetch(`/api/tasks/${taskId}/enrich`, { method: "POST" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (cancelled) return;
+        const s = data?.task?.metadata?.start_step;
+        if (typeof s === "string") setStartStep(s);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [taskId, startStep]);
 
   const total = phase === "work" ? WORK_S : BREAK_S;
   const progress = (total - seconds) / total;
 
   const switchPhase = useCallback(() => {
-    const next: Phase = phase === "work" ? "break" : "work";
-    if (phase === "work") setSessions((s) => s + 1);
-    setPhase(next);
-    setSeconds(next === "work" ? WORK_S : BREAK_S);
+    setPhase((p) => {
+      const next: Phase = p === "work" ? "break" : "work";
+      if (p === "work") {
+        setTodayDone((n) => {
+          const v = n + 1;
+          window.localStorage.setItem(todayKey(), String(v));
+          return v;
+        });
+      }
+      setSeconds(next === "work" ? WORK_S : BREAK_S);
+      return next;
+    });
     setRunning(false);
-  }, [phase]);
+  }, []);
 
   useEffect(() => {
     if (!running) return;
@@ -40,134 +89,205 @@ function FocusTimer() {
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
       if (e.key === " ") { e.preventDefault(); setRunning((r) => !r); }
-      if (e.key === "Escape") router.back();
+      else if (e.key === "Escape") router.back();
+      else if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); switchPhase(); }
+      else if (e.key === "r" || e.key === "R") {
+        setRunning(false);
+        setSeconds(phase === "work" ? WORK_S : BREAK_S);
+      }
     };
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
-  }, [router]);
+  }, [router, switchPhase, phase]);
 
   const mm = String(Math.floor(seconds / 60)).padStart(2, "0");
   const ss = String(seconds % 60).padStart(2, "0");
 
-  const R = 130;
+  const RING = 280;
+  const STROKE = 3;
+  const R = (RING - STROKE) / 2;
   const C = 2 * Math.PI * R;
-  const ringColor = phase === "work" ? "#0891b2" : "#22C55E";
+  const phaseLabel = phase === "work" ? "Focus" : "Break";
+  const subtle = phase === "work" ? "stay focused" : "take a breath";
 
   return (
-    <main
-      style={{ backgroundColor: "#0f1722", minHeight: "100dvh", position: "relative" }}
-      className="flex flex-col items-center justify-center overflow-hidden select-none"
+    <div
+      style={{
+        width: "100%",
+        minHeight: "100dvh",
+        background: T.bg,
+        color: T.fg,
+        fontFamily: T.font,
+        display: "flex",
+        flexDirection: "column",
+        backgroundImage: `radial-gradient(ellipse 60% 50% at 50% 30%, ${T.ai}10, transparent 70%)`,
+      }}
+      className="select-none"
     >
-      {/* Ambient glow */}
-      <div style={{
-        position: "absolute", inset: 0, pointerEvents: "none",
-        background: `radial-gradient(ellipse 700px 500px at 50% 50%, ${ringColor}1a 0%, transparent 70%)`,
-      }} />
-
-      {/* Back button — top left */}
-      <button
-        onClick={() => router.back()}
-        style={{ position: "absolute", top: 28, left: 28, color: "rgba(255,255,255,0.4)" }}
-        className="flex items-center gap-1.5 text-sm font-medium transition-colors hover:!text-white"
-      >
-        <ArrowLeft size={16} />
-        Back
-      </button>
-
-      {/* Session count — top right */}
-      {sessions > 0 && (
-        <div style={{ position: "absolute", top: 32, right: 32, color: "rgba(255,255,255,0.35)", fontSize: 13 }}
-          className="flex items-center gap-1.5">
-          <span>✓</span>
-          <span>{sessions} session{sessions > 1 ? "s" : ""} done</span>
-        </div>
-      )}
-
-      {/* Phase badge */}
-      <div className="mb-5 px-4 py-1.5 rounded-full" style={{
-        border: `1px solid ${ringColor}50`,
-        backgroundColor: `${ringColor}18`,
-      }}>
-        <span className="text-[11px] font-bold uppercase tracking-widest" style={{ color: ringColor }}>
-          {phase === "work" ? "Focus Session" : "Short Break"}
+      {/* Top bar — focus block count + esc hint */}
+      <div style={{ padding: "18px 28px", display: "flex", alignItems: "center", gap: 14, fontSize: 11, color: T.dim, fontFamily: T.mono }}>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "3px 10px", borderRadius: 99, background: `${T.ai}15`, color: T.ai }}>
+          <span style={{ width: 6, height: 6, borderRadius: "50%", background: T.ai, boxShadow: `0 0 6px ${T.ai}` }} />
+          Focus block · {String(todayDone).padStart(2, "0")} today
         </span>
-      </div>
-
-      {/* Deliverable title */}
-      <p className="mb-12 max-w-sm text-center px-8 leading-relaxed"
-        style={{ color: "rgba(255,255,255,0.4)", fontSize: 15 }}>
-        {title}
-      </p>
-
-      {/* Ring + timer */}
-      <div style={{ position: "relative", width: 300, height: 300, marginBottom: 48 }}
-        className="flex items-center justify-center">
-        <svg width={300} height={300} style={{ position: "absolute", inset: 0, transform: "rotate(-90deg)" }}>
-          <circle cx={150} cy={150} r={R} fill="none" stroke="rgba(255,255,255,0.07)" strokeWidth={6} />
-          <circle cx={150} cy={150} r={R} fill="none"
-            stroke={ringColor} strokeWidth={6} strokeLinecap="round"
-            strokeDasharray={C} strokeDashoffset={C * (1 - progress)}
-            style={{ transition: "stroke-dashoffset 1s linear, stroke 0.5s ease" }}
-          />
-        </svg>
-        <div className="flex flex-col items-center gap-2">
-          <span className="font-black tabular-nums"
-            style={{ fontSize: "4.5rem", lineHeight: 1, color: "#fff", letterSpacing: "-0.03em" }}>
-            {mm}:{ss}
-          </span>
-          <span style={{ fontSize: 13, color: "rgba(255,255,255,0.25)", letterSpacing: "0.06em" }}>
-            {phase === "work" ? "stay focused" : "take a breath"}
-          </span>
-        </div>
-      </div>
-
-      {/* Controls */}
-      <div className="flex items-center gap-5">
-        {/* Reset */}
+        <span style={{ flex: 1 }} />
         <button
-          onClick={() => { setRunning(false); setSeconds(phase === "work" ? WORK_S : BREAK_S); }}
-          className="flex items-center justify-center rounded-full transition-all"
-          style={{ width: 52, height: 52, background: "rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.55)" }}
-          onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "rgba(255,255,255,0.14)"; }}
-          onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "rgba(255,255,255,0.08)"; }}
-        >
-          <RotateCcw size={20} />
-        </button>
-
-        {/* Play / Pause — large */}
-        <button
-          onClick={() => setRunning((r) => !r)}
-          className="flex items-center justify-center rounded-full transition-all"
+          onClick={() => router.back()}
           style={{
-            width: 80, height: 80,
-            backgroundColor: ringColor,
-            boxShadow: `0 0 48px ${ringColor}60`,
+            display: "inline-flex", alignItems: "center", gap: 6,
+            color: T.dim, background: "none", border: "none",
+            cursor: "pointer", fontSize: 11, fontFamily: T.mono,
           }}
-          onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.opacity = "0.88"; }}
-          onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.opacity = "1"; }}
         >
-          {running
-            ? <Pause size={30} fill="white" color="white" />
-            : <Play size={30} fill="white" color="white" style={{ marginLeft: 3 }} />
-          }
-        </button>
-
-        {/* Skip */}
-        <button
-          onClick={switchPhase}
-          className="flex items-center justify-center rounded-full transition-all"
-          style={{ width: 52, height: 52, background: "rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.55)" }}
-          onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "rgba(255,255,255,0.14)"; }}
-          onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "rgba(255,255,255,0.08)"; }}
-        >
-          <SkipForward size={20} />
+          <ArrowLeft size={12} /> esc · exit
         </button>
       </div>
 
-      <p className="mt-8" style={{ fontSize: 12, color: "rgba(255,255,255,0.18)" }}>
-        Space to pause · Esc to exit
-      </p>
-    </main>
+      {/* Center column */}
+      <div
+        style={{
+          flex: 1,
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: "0 32px",
+          textAlign: "center",
+        }}
+      >
+        <div style={{ fontSize: 11, color: T.dim, letterSpacing: ".1em", textTransform: "uppercase", marginBottom: 10 }}>
+          Working on{deliverableTitle ? ` · ${deliverableTitle}` : ""}
+        </div>
+        <div style={{ fontSize: 42, fontWeight: 600, letterSpacing: "-.025em", maxWidth: 880, lineHeight: 1.15, color: T.fg }}>
+          {title}
+        </div>
+
+        {/* Ring + timer */}
+        <div style={{ marginTop: 48, position: "relative", width: RING, height: RING }}>
+          <svg width={RING} height={RING} style={{ position: "absolute", inset: 0, transform: "rotate(-90deg)" }}>
+            <circle cx={RING / 2} cy={RING / 2} r={R} fill="none" stroke={T.border} strokeWidth={STROKE} />
+            <circle
+              cx={RING / 2}
+              cy={RING / 2}
+              r={R}
+              fill="none"
+              stroke={T.ai}
+              strokeWidth={STROKE}
+              strokeLinecap="round"
+              strokeDasharray={C}
+              strokeDashoffset={C * (1 - progress)}
+              style={{ transition: "stroke-dashoffset 1s linear, stroke .4s ease" }}
+            />
+          </svg>
+          <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
+            <div
+              style={{
+                fontVariantNumeric: "tabular-nums",
+                fontSize: 84,
+                fontWeight: 600,
+                letterSpacing: "-.04em",
+                lineHeight: 1,
+                color: T.fg,
+              }}
+            >
+              {mm}<span style={{ color: T.dim }}>:</span>{ss}
+            </div>
+            <div style={{ marginTop: 8, fontSize: 11, color: T.dim, letterSpacing: ".18em", textTransform: "uppercase", fontFamily: T.mono }}>
+              {phaseLabel} · {subtle}
+            </div>
+          </div>
+        </div>
+
+        {/* Start step card — only meaningful during work phase */}
+        {phase === "work" && startStep && (
+          <div
+            style={{
+              marginTop: 36,
+              padding: "16px 22px",
+              background: T.panel,
+              border: `1px solid ${T.border}`,
+              borderRadius: 12,
+              maxWidth: 640,
+              display: "flex",
+              gap: 14,
+              alignItems: "flex-start",
+              textAlign: "left",
+              boxShadow: "0 4px 16px rgba(0,0,0,0.35)",
+            }}
+          >
+            <div
+              style={{
+                width: 28, height: 28, borderRadius: 8,
+                background: `${T.ai}15`, color: T.ai,
+                display: "grid", placeItems: "center",
+                flexShrink: 0, fontWeight: 700,
+              }}
+            >
+              1
+            </div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 10, color: T.ai, fontWeight: 600, letterSpacing: ".12em", textTransform: "uppercase" }}>
+                Start step
+              </div>
+              <div style={{ marginTop: 3, fontSize: 14, lineHeight: 1.4, color: T.fg }}>
+                {startStep}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Bottom controls — Atlas pill style */}
+      <div style={{ padding: "24px 28px", display: "flex", justifyContent: "center", gap: 10 }}>
+        <PillButton
+          icon={<RotateCcw size={12} />}
+          label="Reset"
+          shortcut="R"
+          onClick={() => { setRunning(false); setSeconds(phase === "work" ? WORK_S : BREAK_S); }}
+        />
+        <PillButton
+          icon={running ? <Pause size={12} /> : <Play size={12} />}
+          label={running ? "Pause" : seconds === total ? "Start" : "Resume"}
+          shortcut="Space"
+          onClick={() => setRunning((r) => !r)}
+        />
+        <PillButton
+          icon={<Check size={12} />}
+          label="Complete"
+          shortcut="⌘⏎"
+          onClick={switchPhase}
+        />
+      </div>
+    </div>
+  );
+}
+
+function PillButton({
+  icon, label, shortcut, onClick,
+}: { icon: React.ReactNode; label: string; shortcut: string; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        padding: "10px 18px",
+        background: T.panel,
+        border: `1px solid ${T.border}`,
+        borderRadius: 8,
+        color: T.fg,
+        fontSize: 12,
+        cursor: "pointer",
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        fontFamily: T.font,
+        transition: "background-color .15s ease, border-color .15s ease",
+      }}
+      onMouseEnter={(e) => { e.currentTarget.style.borderColor = "#33404f"; }}
+      onMouseLeave={(e) => { e.currentTarget.style.borderColor = T.border; }}
+    >
+      {icon} {label}
+      <span style={{ color: T.dim, fontFamily: T.mono, fontSize: 10 }}>{shortcut}</span>
+    </button>
   );
 }
 

@@ -8,12 +8,13 @@ import { cn } from "@/lib/utils";
 import { LogOut, ChevronDown, Inbox } from "lucide-react";
 import { NavbarInboxPopover } from "@/components/layout/navbar-inbox-popover";
 import { useActiveProject } from "@/components/layout/active-project-context";
+import { useAIMode } from "@/components/layout/ai-mode-context";
 
 const navTabs = [
   { href: "/dashboard", label: "Dashboard", match: (p: string) => p === "/dashboard" || p.startsWith("/dashboard/") },
   { href: "/projects", label: "Map", match: (p: string) => p === "/projects" || p.startsWith("/projects/") },
   { href: "/calendar", label: "Calendar", match: (p: string) => p === "/calendar" || p.startsWith("/calendar/") },
-  { href: "/inbox", label: "Portfolio", match: (p: string) => p === "/inbox" || p.startsWith("/inbox/") },
+  { href: "/portfolio", label: "Portfolio", match: (p: string) => p === "/portfolio" || p.startsWith("/portfolio/") },
 ];
 
 interface NavbarProps {
@@ -93,6 +94,7 @@ export function Navbar({ userEmail }: NavbarProps) {
   const pathname = usePathname();
   const username = userEmail ? userEmail.split("@")[0] : null;
   const { active } = useActiveProject();
+  const { aiOn, toggle } = useAIMode();
 
   return (
     <header className="sticky top-0 z-50 h-11 bg-atlas-panel border-b border-atlas-border flex items-center px-4 gap-[18px]">
@@ -141,16 +143,26 @@ export function Navbar({ userEmail }: NavbarProps) {
 
       {/* Right cluster */}
       <div className="flex items-center gap-2.5 text-atlas-dim text-[11px]">
-        <span className="inline-flex items-center gap-1 px-2 py-[3px] rounded bg-atlas-ai/15 text-atlas-ai">
+        <button
+          type="button"
+          onClick={toggle}
+          aria-pressed={aiOn}
+          className={cn(
+            "inline-flex items-center gap-1 px-2 py-[3px] rounded transition-colors",
+            aiOn
+              ? "bg-atlas-ai/15 text-atlas-ai hover:bg-atlas-ai/25"
+              : "bg-atlas-panel-2 text-atlas-dim hover:text-atlas-fg"
+          )}
+        >
           <span
-            className="w-1.5 h-1.5 rounded-full bg-atlas-ai"
-            style={{ boxShadow: "0 0 6px #0891b2" }}
+            className={cn(
+              "w-1.5 h-1.5 rounded-full",
+              aiOn ? "bg-atlas-ai" : "bg-atlas-dim"
+            )}
+            style={aiOn ? { boxShadow: "0 0 6px #0891b2" } : undefined}
           />
-          AI on
-        </span>
-        <span className="px-2 py-[3px] border border-atlas-border rounded font-mono text-[10px] text-atlas-dim">
-          ⌘K
-        </span>
+          {aiOn ? "AI on" : "AI off"}
+        </button>
         <Link
           href="/inbox"
           className="text-atlas-dim hover:text-atlas-fg transition-colors"

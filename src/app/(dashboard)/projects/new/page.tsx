@@ -13,6 +13,7 @@ import type {
 import Link from "next/link";
 import { ClarificationInterview } from "@/components/projects/clarification-interview";
 import { PlanLoading } from "@/components/projects/plan-loading";
+import { useAIMode } from "@/components/layout/ai-mode-context";
 import {
   DndContext,
   closestCenter,
@@ -124,6 +125,7 @@ function buildDeliverableInputs(
 
 export default function NewProjectPage() {
   const router = useRouter();
+  const { aiOn } = useAIMode();
   const [step, setStep] = useState<Step>("input");
   const [projectText, setProjectText] = useState("");
   const [durationHint, setDurationHint] = useState<number>(4);
@@ -217,6 +219,31 @@ export default function NewProjectPage() {
       setError("Please describe your project in more detail — what exactly will you build or achieve?");
       return;
     }
+
+    // AI off: skip clarification + plan. Use the idea as the description and
+    // force the user to fill in the title and at least one deliverable manually.
+    if (!aiOn) {
+      setError(null);
+      setPlanResult(null);
+      setInterviewQuestions([]);
+      setInterviewAnswers([]);
+      setProjectTitle("");
+      setProjectDescription(projectText.trim());
+      setDeliverables([
+        {
+          id: uid(),
+          title: "",
+          description: "",
+          outcome_description: "",
+          estimated_hours: 0,
+          due_date: "",
+          verification_type: "manual_upload" as VerificationType,
+        },
+      ]);
+      setStep("review");
+      return;
+    }
+
     setStep("clarifying_loading");
     setError(null);
     setInterviewQuestions([]);
@@ -356,8 +383,9 @@ export default function NewProjectPage() {
 
       // Generate micro-tasks for the first deliverable, then schedule them on
       // the calendar. Failures here are non-fatal — the user can retry from
-      // the launch page.
-      if (first_deliverable_id) {
+      // the launch page. When AI is off we skip generation entirely so the
+      // user owns every task they see.
+      if (first_deliverable_id && aiOn) {
         try {
           setLaunchStatus("Generating micro-tasks…");
           await fetch(`/api/deliverables/${first_deliverable_id}/generate-tasks`, {
@@ -401,7 +429,7 @@ export default function NewProjectPage() {
           {/* Giant input */}
           <form onSubmit={handleGenerate} className="space-y-3">
             {/* Textarea — standalone card */}
-            <div className="flex items-start w-full px-6 py-5 gap-3 rounded-2xl border-2 border-outline-variant/20 bg-surface-container-lowest shadow-[0px_12px_32px_rgba(17,48,105,0.08)] focus-within:shadow-[0_0_0_3px_rgba(94,106,210,0.2),0px_12px_32px_rgba(17,48,105,0.08)] transition-shadow">
+            <div className="flex items-start w-full px-6 py-5 gap-3 rounded-2xl border-2 border-outline-variant/20 bg-surface-container-lowest shadow-[0px_12px_32px_rgba(17,48,105,0.08)] focus-within:shadow-[0_0_0_3px_rgba(8,145,178,0.18),0px_12px_32px_rgba(17,48,105,0.08)] transition-shadow">
               <div className="shrink-0 pt-[5px] text-on-surface-variant">
                 <Search size={20} />
               </div>
@@ -424,30 +452,32 @@ export default function NewProjectPage() {
 
             {/* Controls row — separate from textarea */}
             <div className="flex items-center gap-3">
-              {/* Intensity segmented control */}
-              <div className="flex items-center bg-surface-container rounded-xl p-1 gap-0.5">
-                {(["Casual", "Steady", "Intense"] as const).map((label) => {
-                  const val = label.toLowerCase() as "casual" | "steady" | "intense";
-                  const active = intensity === val;
-                  const activeColor =
-                    val === "intense" ? "text-warning" : val === "casual" ? "text-on-surface" : "text-primary";
-                  return (
-                    <button
-                      key={val}
-                      type="button"
-                      onClick={() => setIntensity(val)}
-                      className={cn(
-                        "text-xs font-semibold px-4 py-2 rounded-lg transition-all",
-                        active
-                          ? `bg-surface-container-lowest shadow-sm ${activeColor}`
-                          : "text-on-surface-variant/60 hover:text-on-surface"
-                      )}
-                    >
-                      {label}
-                    </button>
-                  );
-                })}
-              </div>
+              {/* Intensity segmented control — AI-only */}
+              {aiOn && (
+                <div className="flex items-center bg-surface-container rounded-xl p-1 gap-0.5">
+                  {(["Casual", "Steady", "Intense"] as const).map((label) => {
+                    const val = label.toLowerCase() as "casual" | "steady" | "intense";
+                    const active = intensity === val;
+                    const activeColor =
+                      val === "intense" ? "text-warning" : val === "casual" ? "text-on-surface" : "text-primary";
+                    return (
+                      <button
+                        key={val}
+                        type="button"
+                        onClick={() => setIntensity(val)}
+                        className={cn(
+                          "text-xs font-semibold px-4 py-2 rounded-lg transition-all",
+                          active
+                            ? `bg-surface-container-lowest shadow-sm ${activeColor}`
+                            : "text-on-surface-variant/60 hover:text-on-surface"
+                        )}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
 
               {/* Duration */}
               <div className="flex items-center gap-2.5 px-4 py-2 bg-surface-container rounded-xl text-xs">
@@ -744,7 +774,7 @@ export default function NewProjectPage() {
   }
 
   // ── Step: review — split view ────────────────────────────────
-  if (step === "review" && planResult?.plan) {
+  if (step === "review" && (planResult?.plan || !aiOn)) {
     return (
       <div className="flex flex-col h-[calc(100vh-3.5rem)]">
         {/* Top bar */}
@@ -757,21 +787,31 @@ export default function NewProjectPage() {
             Edit project
           </button>
           <div className="flex items-center gap-2 text-sm font-semibold text-on-surface">
-            <Sparkles size={15} className="text-primary" />
-            AI Generated Roadmap
-          </div>
-          <button
-            onClick={() => setRegenOpen((v) => !v)}
-            className={cn(
-              "flex items-center gap-1.5 text-xs font-medium transition-colors",
-              regenOpen
-                ? "text-primary"
-                : "text-on-surface-variant hover:text-on-surface"
+            {aiOn ? (
+              <>
+                <Sparkles size={15} className="text-primary" />
+                AI Generated Roadmap
+              </>
+            ) : (
+              "Project Plan"
             )}
-          >
-            <RefreshCw size={13} className={regenerating ? "animate-spin" : ""} />
-            Regenerate
-          </button>
+          </div>
+          {aiOn ? (
+            <button
+              onClick={() => setRegenOpen((v) => !v)}
+              className={cn(
+                "flex items-center gap-1.5 text-xs font-medium transition-colors",
+                regenOpen
+                  ? "text-primary"
+                  : "text-on-surface-variant hover:text-on-surface"
+              )}
+            >
+              <RefreshCw size={13} className={regenerating ? "animate-spin" : ""} />
+              Regenerate
+            </button>
+          ) : (
+            <span className="w-[88px]" />
+          )}
         </div>
 
         <div className="flex flex-1 overflow-hidden">
@@ -797,7 +837,7 @@ export default function NewProjectPage() {
               <div className="flex flex-wrap gap-2">
                 <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-surface-container text-on-surface-variant rounded-full text-xs font-medium border border-outline/50">
                   <Calendar size={11} />
-                  {planResult.plan.duration_weeks} Weeks
+                  {planResult?.plan?.duration_weeks ?? durationHint} Weeks
                 </span>
                 <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-surface-container text-on-surface-variant rounded-full text-xs font-medium border border-outline/50">
                   <Zap size={11} />
@@ -970,8 +1010,14 @@ export default function NewProjectPage() {
                 <div>
                   <h3 className="text-base font-bold text-on-surface">What exactly will you deliver?</h3>
                   <p className="text-xs text-on-surface-variant mt-0.5">
-                    Drag to reorder ·{" "}
-                    {planResult.plan.total_estimated_hours?.toFixed(0) ?? "—"}h total. Min 1, max 10.
+                    {aiOn ? (
+                      <>
+                        Drag to reorder ·{" "}
+                        {planResult?.plan?.total_estimated_hours?.toFixed(0) ?? "—"}h total. Min 1, max 10.
+                      </>
+                    ) : (
+                      <>Add at least one deliverable. Min 1, max 10.</>
+                    )}
                   </p>
                 </div>
                 <span className="text-xs text-on-surface-variant font-medium bg-surface rounded-full px-3 py-1 border border-outline/40">
